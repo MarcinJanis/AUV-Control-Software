@@ -53,10 +53,9 @@ void setup()
   randomSeed(analogRead(0)); // Możesz użyć dowolnego analogowego pinu
 }
 
-
 void handleRoot()
 {  
-    String html = "<html><head><style> h1 { font-size: 36px; color: blue; text-align: center; margin-top: 20px;}</style></head><body>";
+    String html = "<html><head><style> h1 { font-size: 36px; background-color: darkblue; color: white; text-align: center; margin-top: 20px;}</style></head><body>";
     html += "<h1> AUV control panel </h1>"; 
     html += "<br><br><button onclick=\"location.href='/on'\"> AUV ON </button>";
     html += "<div class=\"footer\">"; // Stopka
@@ -86,45 +85,118 @@ void handleOn() {
         <!DOCTYPE html> 
         <html lang="pl">
         <head>
-            <meta charset="UTF-8"> // enable polish letters
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">  
-            <title>AUV Control Panel</title> 
-            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script> 
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+          <title>AUV Control Panel</title> 
+          <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script> 
 
-            <style>
-              h1 { 
-              font-size: 36px; 
-              color: blue; 
-              text-align: center; 
-              margin-top: 20px; 
-              }
+        <style>
+          h1 { 
+            font-size: 36px; 
+            color: white; 
+            text-align: center; 
+            margin-top: 20px; 
+            background-color: darkblue;
+            }
+
+          h2 { 
+            font-size: 18px; 
+            color: black;  
+            margin-top: 10%; 
+            }
+
+          h3 {
+            font-size: 15px;
+            color: black; 
+            margin-right: 10%; 
+            border: 2px solid black; 
+            padding: 3%;              /* Odstęp wewnętrzny */
+            border-radius: 5px;        /* Zaokrąglenie rogów */
+            width: fit-content;         /* Szerokość dopasowana do zawartości */
+            background-color: #F5F5F5; /* Kolor tła */
+          }
                   
-            table {
-              width: 50%; /* Width of table */
-              border-collapse: collapse; /* Usuwa przerwy między komórkami */
-              margin: 20px 0; /* Dodaje odstęp powyżej i poniżej tabeli */
-              font-family: Arial, sans-serif; /* Ustala czcionkę */
+          table {
+            width: 50%; /* Width of table */
+            //border-collapse: collapse; /* Delete przerwy (?) */
+            margin: 5%; /* Space before and after table */
+            font-family: Arial, sans-serif; /* Font */
+            border-radius: 5px;
             }
 
-            /* Styl dla nagłówków tabeli */
+            /* Style for table headers */
             th {
-              background-color: #000080; /* Navy background */
+              background-color: darkblue; /* Navy background */
+              border: 2px solid black; /* Gray borders */
               color: white; /* White font */
-              padding: 10px; /* Dodaje wewnętrzny odstęp */
-              text-align: center; /* Wyrównanie tekstu do lewej */
+              padding: 10px; /* Inner space */
+              text-align: center; /* Center text */
             }
 
-            /* Styl dla komórek tabeli */
+            /* Style for table cells */
             td {
-              border: 1px solid #ddd; /* Szary obramowanie */
-              padding: 8px; /* Dodaje wewnętrzny odstęp */
+              background-color: lightgrey; /* Light Grey background */
+              border: 1px solid black; /* Black borders */
+              padding: 8px; /* Inner space */
+              text-align: center; /* Center text */
             }
-            </style>
-        </head>
-        <body>
-            <h1> AUV Control Panel </h1>
-            <br><br><button onclick="location.href='/'">AUV OFF</button> 
-            <p id="wynik"></p>  
+
+            /* Style for return button */
+            .auv-button {
+              margin: 15%;
+            }
+
+            .container {
+            display: flex; /* Używamy flexboxa */
+            justify-content: space-between; /* Rozmieszczenie kolumn */
+            margin: 20px; /* Odstępy zewnętrzne */
+          }
+
+          .column {
+            width: 45%; /* Szerokość kolumny */
+            padding: 10px; /* Odstęp wewnętrzny */
+            border: 1px solid #ccc; /* Ramka kolumny */
+            border-radius: 5px; /* Zaokrąglone rogi */
+          }
+
+          </style>
+          </head>
+
+          <body>
+            <h1> <b> AUV Control Panel </b> </h1>
+            <br><br> <button onclick="location.href='/'"> AUV OFF </button> <br><br>
+            
+            <div class="container" >
+            <div class="column" > 
+            <div class="form-container">
+            <h2> Command Panel: </h2>
+              <form id="dataForm">
+                  
+                  <label for="selectAction">    Choose action: </label>
+                  <select id="selectAction" name="selectAction">
+                  <option value="Roll"> Roll </option>
+                  <option value="Pitch"> Pitch </option>
+                  <option value="Yaw"> Yaw </option>
+                  <option value="Depth"> Depth </option>
+                  </select>
+
+                <label for="dataInput"> Inser value: </label>
+                <input type="text" id="dataInput" name="dataInput" placeholder=" eg. Roll 30 " required>
+
+                <input type="submit" value="Set">
+              </form>
+
+            </div>
+            </div>
+            <div class="column" > 
+            <h3>
+              <p id="rollSetpoint">Roll angle [deg]: </p>
+              <p id="yawSetpoint"> Yaw angle  [deg]: </p>
+              <p id="depthSetpoint">Depth        [m]: </p>
+            </h3>
+            </div>
+            </div>
+            <p id="Table"></p>  
             <table id="MeasurementTable">
                 <thead>
                     <tr>
@@ -134,14 +206,15 @@ void handleOn() {
                         <th> Depth [m] </th>
                     </tr>
                 </thead>
+
                 <tbody>
                     <!-- Place for rows -->
                 </tbody>
             </table>
 
             <script>
-            //  Global Var
-                var timeSample, rollSample, yawSample, depthSample;
+            //  Global Var: 
+                var timeSample, rollSample, yawSample, depthSample; // data to send
                 var rowAmount;
                 var rowMaxAmount=10;
                 function updateNumber() {
@@ -149,40 +222,85 @@ void handleOn() {
                         url: '/Data', // Server demand
                         type: 'GET',
                         success: function(data) {
-                            $('#wynik').text(data); // Aktualizacja wyniku
-                            timeSample = data.timeSample; // Przypisanie do globalnych zmiennych
+                            $('#Table').text(data); // Actualisation
+                            timeSample = data.timeSample; // Set to global var
                             rollSample = data.rollSample;
                             yawSample = data.yawSample;
                             depthSample = data.depthSample;
-                            addRow(); // Dodanie wiersza po aktualizacji
+                            addRow(); // Add another row
                         }
                     });
                 }
+
                 function addRow() {
+                  // Formatting of new row 
                     var col1 = timeSample;
                     var col2 = rollSample;
                     var col3 = yawSample;
                     var col4 = depthSample;
-                    // Creating of new row 
                     var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td></tr>";
-
-                    // Dodanie wiersza do tabeli
+                  // Adding new row
                     $('#MeasurementTable tbody').append(newRow);
                     rowAmount++;
+                    console.log(rowAmount);
                     if (rowAmount>=rowMaxAmount){
                     $('#MeasurementTable tbody tr:first').remove();
                     rowAmount--;
                     }
                 }
+                setInterval(updateNumber, 1000); // Call function every 1000 ms
 
-                setInterval(updateNumber, 1000); // Wywoływanie co 1000 ms
+
+                // Command send form 
+              $('#dataForm').on('submit', function(event) {
+                event.preventDefault(); // Blocking defoault work 
+
+                var inputCommand = $('#dataInput').val(); // Get value from input form
+                var selectAction = $('#selectAction').val(); // Pobranie wartości z listy rozwijanej
+
+                // Sending data
+                $.ajax({
+                  url: 'http://192.168.100.61/on', 
+                  type: "POST",
+                  data: { 
+                    dataInput: selectAction + " " + inputCommand  // Send data
+                  },
+                  success: function(response) {
+                    console.log("Data sent correctly: ", response);
+                    /* display setpoints */
+                    if (selectAction == "Roll" ){ 
+                    document.getElementById("rollSetpoint").innerText = inputCommand;
+                    document.getElementById("yawSetpoint").innerText = "0"; 
+                    } 
+                    if (selectAction == "Yaw" ){ 
+                    document.getElementById("rollSetpoint").innerText = "90" ; 
+                    document.getElementById("yawSetpoint").innerText = inputCommand; 
+                    } 
+                    if (selectAction == "Depth" ){ 
+                    document.getElementById("depthSetpoint").innerText = inputCommand; 
+                    document.getElementById("rollSetpoint").innerText = "0"; 
+                    } 
+
+                  },
+                  error: function(error) {
+                    console.log("Error while sending data: ", error);
+                  }
+                });
+              });
+
+
             </script>
         </body>
         </html>
     )rawliteral";
-    server.send(200, "text/html", html);
-}
 
+  server.send(200, "text/html", html);
+
+  if (server.hasArg("dataInput")) {
+      String receivedData = server.arg("dataInput");
+      Serial.println("Otrzymane dane: " + receivedData);
+  }
+}
 
 
 
