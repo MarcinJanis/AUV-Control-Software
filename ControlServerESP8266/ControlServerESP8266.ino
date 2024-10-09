@@ -57,7 +57,7 @@ void handleRoot()
 {  
     String html = "<html><head><style> h1 { font-size: 36px; background-color: darkblue; color: white; text-align: center; margin-top: 20px;}</style></head><body>";
     html += "<h1> AUV control panel </h1>"; 
-    html += "<br><br><button onclick=\"location.href='/on'\"> AUV ON </button>";
+    html += "<br><br><button onclick=\"location.href='/on'\"> <b>AUV ON</b> </button>";
     html += "<div class=\"footer\">"; // Stopka
     html += "<p> Author: Marcin Janis </p>";
     html += "</div>";
@@ -71,7 +71,8 @@ void handleData() {
     jsonResponse += "\"timeSample\":" + String(random(0, 100)) + ",";
     jsonResponse += "\"rollSample\":" + String(random(100, 200)) + ",";
     jsonResponse += "\"yawSample\":" + String(random(200, 300)) + ",";
-    jsonResponse += "\"depthSample\":" + String(random(200, 300)); // Dodany przecinek
+    jsonResponse += "\"depthSample\":" + String(random(200, 300)) + ",";
+    jsonResponse += "\"veloSample\":" + String(random(0, 1)); // Dodany przecinek
     jsonResponse += "}";
     server.send(200, "application/json", jsonResponse);
 }
@@ -110,10 +111,10 @@ void handleOn() {
             color: black; 
             margin-right: 10%; 
             border: 2px solid black; 
-            padding: 3%;              /* Odstęp wewnętrzny */
-            border-radius: 5px;        /* Zaokrąglenie rogów */
-            width: fit-content;         /* Szerokość dopasowana do zawartości */
-            background-color: #F5F5F5; /* Kolor tła */
+            padding: 3%;              
+            border-radius: 5px;        
+            width: fit-content;        
+            background-color: #F5F5F5; 
           }
                   
           table {
@@ -142,21 +143,47 @@ void handleOn() {
             }
 
             /* Style for return button */
-            .auv-button {
+            .auv-button { // its good to change this name
               margin: 15%;
             }
 
-            .container {
-            display: flex; /* Używamy flexboxa */
-            justify-content: space-between; /* Rozmieszczenie kolumn */
-            margin: 20px; /* Odstępy zewnętrzne */
+          /* positioning in two columns */
+          .container {
+            display: flex; /* flexbox */
+            justify-content: space-between;
+            margin: 20px; 
           }
 
           .column {
-            width: 45%; /* Szerokość kolumny */
-            padding: 10px; /* Odstęp wewnętrzny */
-            border: 1px solid #ccc; /* Ramka kolumny */
-            border-radius: 5px; /* Zaokrąglone rogi */
+            width: 45%; 
+            padding: 10px; 
+            border: 3px solid black; 
+            border-radius: 8px; 
+          }
+
+          .updateTableOnButton {
+            height: 100px;
+            width: 160px;
+          }
+
+          .motorOnButton {
+            height: 100px;
+            width: 160px;
+          }
+
+          .motorButtonOn{
+            background-color: red; 
+            color: white;
+          }
+
+          .motorButtonOff{
+            background-color: green; 
+            color: black;
+          }
+          .button-container {
+          justify-content: center;
+          display: flex; 
+          gap: 20px;     
           }
 
           </style>
@@ -164,8 +191,12 @@ void handleOn() {
 
           <body>
             <h1> <b> AUV Control Panel </b> </h1>
-            <br><br> <button onclick="location.href='/'"> AUV OFF </button> <br><br>
-            
+            <br><br> 
+            <div class="button-container">
+            <button onclick="location.href='/'"> <b>AUV OFF</b> </button>
+            <button id="updateTableOnButton"> <b> Stop/Start Recording  </b></button>
+            <button id="motorOnButton"><b> Motor ON/OFF </b></button>
+            </div>
             <div class="container" >
             <div class="column" > 
             <div class="form-container">
@@ -180,19 +211,18 @@ void handleOn() {
                   <option value="Depth"> Depth </option>
                   </select>
 
-                <label for="dataInput"> Inser value: </label>
-                <input type="text" id="dataInput" name="dataInput" placeholder=" eg. Roll 30 " required>
+                <label for="dataInput">   Insert value: </label>
+                <input type="text" id="dataInput" name="dataInput" placeholder=" ... " required>
 
                 <input type="submit" value="Set">
               </form>
-
             </div>
             </div>
             <div class="column" > 
             <h3>
-              <p id="rollSetpoint">Roll angle [deg]: </p>
-              <p id="yawSetpoint"> Yaw angle  [deg]: </p>
-              <p id="depthSetpoint">Depth        [m]: </p>
+              <p id="rollSetpoint">Roll setpoint [deg]: 0</p>
+              <p id="yawSetpoint">Yaw setpoint [deg]:  0</p>
+              <p id="depthSetpoint">Depth setpoint [m]:  0</p>
             </h3>
             </div>
             </div>
@@ -204,6 +234,7 @@ void handleOn() {
                         <th> Roll [deg] </th>
                         <th> Yaw  [deg]  </th>
                         <th> Depth [m] </th>
+                        <th> Velocity [m/s] </th>
                     </tr>
                 </thead>
 
@@ -214,9 +245,53 @@ void handleOn() {
 
             <script>
             //  Global Var: 
-                var timeSample, rollSample, yawSample, depthSample; // data to send
-                var rowAmount;
-                var rowMaxAmount=10;
+                var AUV_ON=0;
+                var timeSample, rollSample, yawSample, depthSample , veloSample; // data to send
+                var rowAmount=0;
+                var rowMaxAmount=60;
+                var updateTableOn=0;
+                var sendDataPrepared =0; // prepared data to send to server
+
+                document.getElementById("motorOnButton").addEventListener("click", function() {
+                  AUV_ON = !AUV_ON;
+
+                  if (AUV_ON) {
+                    document.getElementById("motorOnButton").innerText = "Stop Motor";
+                    document.getElementById("motorOnButton").classList.remove("motorButtonOff");
+                    document.getElementById("motorOnButton").classList.add("motorButtonOn");
+                  } else {
+                    document.getElementById("motorOnButton").innerText = "Start Motor";
+                    document.getElementById("motorOnButton").classList.remove("motorButtonOn");
+                    document.getElementById("motorOnButton").classList.add("motorButtonOff");
+                  }
+
+
+
+                  $.ajax({
+                    url: 'http://192.168.100.61/on', 
+                    type: "POST",
+                    data: { 
+                    dataInput: 0  // Send data
+                  },
+                  success: function(response) {
+                    console.log("Data sent correctly: ", response);
+                    /* display setpoints */
+                    document.getElementById("rollSetpoint").innerText ="Roll setpoint [deg]: 0";
+                    document.getElementById("yawSetpoint").innerText ="Yaw setpoint [deg]:  0"; 
+                    document.getElementById("depthSetpoint").innerText ="Depth setpoint [m]:  0"; 
+                  },
+                  error: function(error) {
+                    console.log("Error while sending data: ", error);
+                  }
+                });
+
+                });
+                
+                document.getElementById("updateTableOnButton").addEventListener("click", function() {
+                updateTableOn = !updateTableOn;
+                timeSample = 0;
+                });
+
                 function updateNumber() {
                     $.ajax({
                         url: '/Data', // Server demand
@@ -227,6 +302,7 @@ void handleOn() {
                             rollSample = data.rollSample;
                             yawSample = data.yawSample;
                             depthSample = data.depthSample;
+                            veloSample = data.veloSample;
                             addRow(); // Add another row
                         }
                     });
@@ -238,14 +314,17 @@ void handleOn() {
                     var col2 = rollSample;
                     var col3 = yawSample;
                     var col4 = depthSample;
-                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td></tr>";
+                    var col5 = veloSample;
+                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td><td>" + col5 + "</td></tr>";
                   // Adding new row
+                  if (updateTableOn == 1){
                     $('#MeasurementTable tbody').append(newRow);
                     rowAmount++;
                     console.log(rowAmount);
                     if (rowAmount>=rowMaxAmount){
                     $('#MeasurementTable tbody tr:first').remove();
                     rowAmount--;
+                    }
                     }
                 }
                 setInterval(updateNumber, 1000); // Call function every 1000 ms
@@ -259,26 +338,32 @@ void handleOn() {
                 var selectAction = $('#selectAction').val(); // Pobranie wartości z listy rozwijanej
 
                 // Sending data
+                if (AUV_ON == 0){
+                  sendDataPrepared = 0;
+                }
+                else{
+                  sendDataPrepared = selectAction + " " + inputCommand;
+                }
                 $.ajax({
                   url: 'http://192.168.100.61/on', 
                   type: "POST",
                   data: { 
-                    dataInput: selectAction + " " + inputCommand  // Send data
+                    dataInput: sendDataPrepared  // Send data
                   },
                   success: function(response) {
                     console.log("Data sent correctly: ", response);
                     /* display setpoints */
                     if (selectAction == "Roll" ){ 
-                    document.getElementById("rollSetpoint").innerText = inputCommand;
-                    document.getElementById("yawSetpoint").innerText = "0"; 
+                    document.getElementById("rollSetpoint").innerText = "Roll setpoint [deg]:" + inputCommand;
+                    document.getElementById("yawSetpoint").innerText = "Yaw setpoint [deg]: " + "0"; 
                     } 
                     if (selectAction == "Yaw" ){ 
-                    document.getElementById("rollSetpoint").innerText = "90" ; 
-                    document.getElementById("yawSetpoint").innerText = inputCommand; 
+                    document.getElementById("rollSetpoint").innerText = "Roll setpoint [deg]:" + "90" ; 
+                    document.getElementById("yawSetpoint").innerText = "Yaw setpoint [deg]: " + inputCommand; 
                     } 
                     if (selectAction == "Depth" ){ 
-                    document.getElementById("depthSetpoint").innerText = inputCommand; 
-                    document.getElementById("rollSetpoint").innerText = "0"; 
+                    document.getElementById("depthSetpoint").innerText = "Depth setpoint [m]: " + inputCommand; 
+                    document.getElementById("rollSetpoint").innerText = "Roll setpoint [deg]:" + "0"; 
                     } 
 
                   },
@@ -298,7 +383,7 @@ void handleOn() {
 
   if (server.hasArg("dataInput")) {
       String receivedData = server.arg("dataInput");
-      Serial.println("Otrzymane dane: " + receivedData);
+      Serial.println("Data Recived: " + receivedData);
   }
 }
 
