@@ -89,19 +89,19 @@ void MapOutputFunction(void const * argument);
 /* USER CODE BEGIN 0 */
 
 /* Global Variables */
-#define Ts 0.1 // sampling time [s]
-#define TaskSamplingTime_ms 100
+#define Ts 0.05 // sampling time [s]
+#define TaskSamplingTime_ms 50
 // Raw data from IMU
 int16_t accellRaw[3];
 int16_t gyroRaw[3];
 // Scaled data from IMU
 float accellScaled[3]; // Accelerations in Local Frame
 float gyroScaled[3];
-float gyroBias[3];
+float gyroBias[3]={0,0,0};
 // Angle calculated based on accelerometr
 float accellAngle[3];
 // Determined Orientation
-float orientationAngles[3];
+float orientationAngles[3]={0,0,0};
 
 // diagnostics variables
 bool initRequest,NavigInitDone=false;
@@ -112,7 +112,7 @@ TickType_t cycleStart,cycleDuration;
 int temp1=0;
 float gyroScaledFilterdZ[1];
 bool outputMapFcn;
-
+float debugMatrix[2];
 /* USER CODE END 0 */
 
 /**
@@ -195,7 +195,7 @@ int main(void)
   ReadInputHandle = osThreadCreate(osThread(ReadInput), NULL);
 
   /* definition and creation of ProcInputData */
-  osThreadDef(ProcInputData, processInputDataFcn, osPriorityHigh, 0, 256);
+  osThreadDef(ProcInputData, processInputDataFcn, osPriorityHigh, 0, 512);
   ProcInputDataHandle = osThreadCreate(osThread(ProcInputData), NULL);
 
   /* definition and creation of MapOutput */
@@ -547,8 +547,18 @@ void StartDefaultTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
+
+	  if (HAL_GPIO_ReadPin(GPIOC, BUTTON_BOARD_Pin)== GPIO_PIN_RESET){
+		  initRequest = true;
+	  }
+
 	  if (initRequest == true){
 	  	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+	  		gyroBias[0]=0;
+	  		gyroBias[1]=0;
+	  		gyroBias[2]=0;
+
 	  		if (pressStartTime == 0) {
 	  			      // Start the timer
 	  			  pressStartTime = xTaskGetTickCount();
@@ -618,9 +628,9 @@ void processInputDataFcn(void const * argument)
 	  //outputMapFcn = true;
 	  accelCalc(accellRaw, accellScaled , accellAngle);
 	  gyroCalc(gyroRaw,gyroScaled);
-	  kalmanFilter(accellAngle, gyroScaled, orientationAngles, NavigInitDone);
+	  kalmanFilter(accellAngle, gyroScaled, orientationAngles, accellScaled, gyroBias, NavigInitDone);
 	  //orientationAngles[2]+= Ts*ellipFilter(gyroScaled,gyroScaledFilterdZ);
-	  YawEvaluate(orientationAngles,gyroScaled,gyroBias[2],NavigInitDone);
+	  YawEvaluate(orientationAngles,gyroScaled,gyroBias,NavigInitDone,debugMatrix);
 	  if (NavigInitDone == true)NavigInitDone=false;
 	  //outputMapFcn = false;
 	  xSemaphoreGive(inputsCalculated_S_Handle);
@@ -646,7 +656,7 @@ void MapOutputFunction(void const * argument)
 	 if(xSemaphoreTake(inputsCalculated_S_Handle,portMAX_DELAY)==pdTRUE){
 	char buff[50];
 	printf("RawData, %d, %d, %d, %d, %d, %d\n" ,accellRaw[0],accellRaw[1],accellRaw[2],gyroRaw[0],gyroRaw[1],gyroRaw[2]);
-	sprintf(buff,"%.2f, %.2f, %.2f\n",orientationAngles[0],orientationAngles[1],orientationAngles[2]);
+	sprintf(buff,"Orientation, %.2f, %.2f, %.2f\n",orientationAngles[0],orientationAngles[1],orientationAngles[2]);
 	printf(buff);
 	//sprintf(buff,"Orientation, %.2f, %.2f, %.2f\n",orientationAngles[0],orientationAngles[1],orientationAngles[2]);
 	//printf(buff);
@@ -655,7 +665,7 @@ void MapOutputFunction(void const * argument)
 	//HAL_GPIO_WritePin(GPIOA, SPI_SS_Pin , GPIO_PIN_RESET);
 	//uartStatus=HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 300);
 	//HAL_GPIO_WritePin(GPIOA, SPI_SS_Pin, GPIO_PIN_SET);
-		cycleDuration = (cycleStart  - xTaskGetTickCount()); // calculate in ms
+		cycleDuration = (xTaskGetTickCount()- cycleStart); // calculate in ms
 	 }
   }
   /* USER CODE END MapOutputFunction */
