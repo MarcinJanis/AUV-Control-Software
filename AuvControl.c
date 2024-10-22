@@ -7,9 +7,58 @@
 #include <stdbool.h>
 
 
-#define I2C_TIMEOUT 200
-#define Ts 0.1
 
+#define I2C_TIMEOUT 200
+#define Ts 0.05
+#define PI 3.141592
+
+float deg2rad(float input){
+	return input*PI/180.0;
+}
+float rad2deg(float input){
+	return input*180.0/PI;
+}
+
+void R_roll(float angle, float R[3][3]) {
+    float rad = deg2rad(angle);
+    R[0][0] = 1;         R[0][1] = 0;            R[0][2] = 0;
+    R[1][0] = 0;         R[1][1] = cos(rad);     R[1][2] = -sin(rad);
+    R[2][0] = 0;         R[2][1] = sin(rad);     R[2][2] = cos(rad);
+}
+
+void R_pitch(float angle, float R[3][3]) {
+    float rad = deg2rad(angle); // Użyj konwersji do radianów
+    R[0][0] = cos(rad);        R[0][1] = 0;   R[0][2] = sin(rad);
+    R[1][0] = 0;               R[1][1] = 1;   R[1][2] = 0;
+    R[2][0] = -sin(rad);       R[2][1] = 0;   R[2][2] = cos(rad);
+}
+
+void R_yaw(float angle, float R[3][3]) {
+    float rad = deg2rad(angle); // Użyj konwersji do radianów
+    R[0][0] = cos(rad);        R[0][1] = -sin(rad);   R[0][2] = 0;
+    R[1][0] = sin(rad);        R[1][1] = cos(rad);    R[1][2] = 0;
+    R[2][0] = 0;               R[2][1] = 0;           R[2][2] = 1;
+}
+
+void matrixMultiply(int rowsA, int colA, float A[rowsA][colA],
+                    int rowsB, int colB, float B[rowsB][colB],
+                    float C[rowsA][colB]) {
+
+    for (int i = 0; i < rowsA; i++) {
+        for (int j = 0; j < colB; j++) {
+            C[i][j] = 0;
+        }
+    }
+
+
+    for (int i = 0; i < rowsA; i++) {
+        for (int j = 0; j < colB; j++) {
+            for (int k = 0; k < colA; k++) {
+                C[i][j] += A[i][k] * B[k][j];
+            }
+        }
+    }
+}
 
 
 HAL_StatusTypeDef mpu6050_init(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS){
@@ -17,7 +66,6 @@ HAL_StatusTypeDef mpu6050_init(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS){
 // input data:
 // I2C_HandleTypeDef *hi2c - I2C handler
 // uint8_t ADDRESS - Address of device
-
 // timeout - global var I2C_TIMEOUT
 
 	HAL_StatusTypeDef status; // status of communication
@@ -89,8 +137,8 @@ void accelCalc(int16_t AccelDataRaw[3],float Acceleration[3],float AccelAngle[3]
 		Acceleration[i]=AccelDataRaw[i]/16384.0f;
 	}
 
-	AccelAngle[0]=atan2(Acceleration[1],sqrt(pow(Acceleration[0],2)+pow(Acceleration[2],2)))*180/3.14;
-	AccelAngle[1]=atan2(-Acceleration[0],sqrt(pow(Acceleration[1],2)+pow(Acceleration[2],2)))*180/3.14;
+	AccelAngle[0]=atan2(Acceleration[1],sqrt(pow(Acceleration[0],2)+pow(Acceleration[2],2)))*180/PI;
+	AccelAngle[1]=atan2(-Acceleration[0],sqrt(pow(Acceleration[1],2)+pow(Acceleration[2],2)))*180/PI;
 }
 
 
@@ -104,127 +152,85 @@ void gyroCalc(int16_t GyroDataRaw[3], float GyroScaledData[3]){
 
 
 
-void kalmanFilter(float AccellAngle[3], float GyroScaledData[3], float OrientationAngles[3], bool NavigInitDone){
+void kalmanFilter(float AccellAngle[3], float GyroScaledData[3], float OrientationAngles[3], float AccellScaled[3],float gyroBias[3], bool NavigInitDone){
 	static const float PredictErr=0.1; //Q Covariance ...
-	static const float CorrectErr=1; //R Covariance ...
+	static const float CorrectErr = 1.2; //R Covariance ...
 	static float K[2] = {0,0}; // Kalman Gain
 	static float xCorrect[2] = {0,0};
 	static float pPredict[2] = {1,1};
 	static float xPredict[2],pCorrect[2];
+	//static float result[2];
+	//static int quart[2]={1,1};
+
 
 
 		for (int i=0;i<=1;i++){
 		// 1. Prediction Phase
-		xPredict[i] = xCorrect[i] + (Ts * GyroScaledData[i]); //State prediction
+		xPredict[i] = xCorrect[i] + (Ts * (GyroScaledData[i]-gyroBias[i])); //State prediction
 		pPredict[i] = pCorrect[i] + PredictErr; //Covariance prediction
 		K[i] = pPredict[i]/(CorrectErr + pPredict[i]); //Kalman's Gain calculation
 
 		// 2. Correction phase
 		xCorrect[i] = xPredict[i] + K[i]*(AccellAngle[i] - xPredict[i]); //State correction
 		pCorrect[i] = (1 - K[i])*pPredict[i]; //Covariance correction
-		OrientationAngles[i] = xCorrect[i]; //output mapping
-			}
+		//result[i]= xCorrect[i]; //output mapping
+
+		//if (quart == 1 && result[i]>90) quart = 1;
+		//if (quart == 1 && result[i]>90) quart = 1;
+
+		if (i==0){
+			if (AccellScaled[1]>0 && AccellScaled[2]>0) OrientationAngles[i]=xCorrect[i];				// 1st quarter
+			else if (AccellScaled[1]>0 && AccellScaled[2]<0) OrientationAngles[i]= 180 - xCorrect[i];	// 2nd quarter
+			else if (AccellScaled[1]<0 && AccellScaled[2]<0) OrientationAngles[i]= -180 - xCorrect[i];			// 3rd quarter
+			else if (AccellScaled[1]<0 && AccellScaled[2]>0) OrientationAngles[i]= xCorrect[i];	// 4rd quarter
+		}
+		else {
+			if (AccellScaled[0]<0 && AccellScaled[2]>0) OrientationAngles[i]=xCorrect[i];				// 1st quarter
+			else if (AccellScaled[0]<0 && AccellScaled[2]<0) OrientationAngles[i]= 180 - xCorrect[i];	// 2nd quarter
+			else if (AccellScaled[0]>0 && AccellScaled[2]<0) OrientationAngles[i]= - 180 - xCorrect[i];	// 3rd quarter
+			else if (AccellScaled[0]>0 && AccellScaled[2]>0) OrientationAngles[i]= xCorrect[i];			// 4th quarter
+		}
+		}
+
 
 		if (NavigInitDone == true){
 				xCorrect[0]=AccellAngle[0];
 				xCorrect[1]=AccellAngle[1];
 				pPredict[0]=1;
 				pPredict[1]=1;
-				NavigInitDone = false;
 			}
 
 }
 
-void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias,bool NavigInitDone){
 
-	orientationAngles[2]+= (GyroScaled[2]-gyroBias)*Ts;
+
+//float R_yaw(float yaw, float R[3][3]){
+//matrixMultiply
+
+
+void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias[3],bool NavigInitDone, float debugMatrix[2]){
+
+	float R[3][3],Rtemp[3][3],Rroll[3][3],Rpitch[3][3],Ryaw[3][3],wGlobal[3][1],wLocal[3][1];
+	R_roll(orientationAngles[0],Rroll);
+	R_pitch(orientationAngles[1],Rpitch);
+	R_yaw(orientationAngles[2],Ryaw);
+
+	matrixMultiply(3,3,Ryaw,3,3,Rpitch,Rtemp);// R = Ryaw * Rpitch
+	debugMatrix[0]=Rtemp[0][0];
+	matrixMultiply(3,3,Rtemp,3,3,Rroll,R); // R = R * Rroll
+	debugMatrix[0]=R[0][0];
+	wGlobal[0][0] = 0;
+	wGlobal[1][0] = 0;
+	wGlobal[2][0] = 0;
+	wLocal[0][0] = (GyroScaled[0]-gyroBias[0]);
+	wLocal[1][0] = (GyroScaled[1]-gyroBias[1]);
+	wLocal[2][0] = (GyroScaled[2]-gyroBias[2]);
+
+	matrixMultiply(3,3,R,3,1,wLocal,wGlobal); // transform angular velocity from local to global frame
+
+	orientationAngles[2]+= wGlobal[2][0]*Ts;
 	if (NavigInitDone == true)orientationAngles[2] = 0;
 }
 
-/*
 
-float ellipFilter(float GyroScaled[3], float controlOutput[1],bool NavigInitDone) {
-    static const int FilterOrder = 20;
-    static float X[21] = {0}; // 4 elementy
-    //static float Y[3] = {0, 0, 0}; // 3 elementy
-    static const float bias = -2.6537;
-    static const float filterCooNum[21] ={
-    	    -0.029225, -0.034278, -0.039203, -0.043886, -0.048214,
-    	    -0.052079, -0.055387, -0.058052, -0.060006, -0.061200,
-    	     0.965081, -0.061200, -0.060006, -0.058052, -0.055387,
-    	    -0.052079, -0.048214, -0.043886, -0.039203, -0.034278,
-    	    -0.029225
-    	};
-
-   // static const float filterCooDen[4] = {1, -2.885227, 2.776314, -0.890847};
-
-    float output = 0.0f;
-
-    // Shift input samples
-    for (int i = FilterOrder; i > 0; i--) {
-        X[i] = X[i - 1];
-    }
-
-    // Add current input to register
-    X[0] = GyroScaled[2]-bias;
-
-    // Calculate output sample
-    for (int i = 0; i <= FilterOrder; i++) {
-        output += filterCooNum[i] * X[i];
-    }
-   // for (int i = 1; i < FilterOrder; i++) {
-   //     output -= filterCooDen[i] * Y[i - 1];
-   // }
-
-    // Shift output samples
-    //for (int i = FilterOrder - 1; i > 0; i--) {
-    //    Y[i] = Y[i - 1];
-    // }
-    //Y[0] = output; // Map output
-    controlOutput[0] = output;
-    return output;
-}
-
-*/
-
-/*
-
-	static const int FilterOrder=3;
-	static float X[4]={0,0,0,0};
-	static float Y[4]={0,0,0,0};
-
-	static const float filterCooNum[4]={0.944130,-2.832064,2.832064,-0.944130};
-	static const float filterCooDen[4]={1,-2.885227,2.776314,-0.890847};
-	//static const float filterGain[1]={0.808602};
-	static float output;
-	// shift inputs sample register
-
-
-		output = 0.0f;
-
-		// shift inputs register
-		for (int i=FilterOrder;i>0;i--){
-			X[i]=X[i-1];
-		}
-
-		// add currect input to register
-
-			 X[0] = GyroScaled[2];
-
-		// Calculate actual output sample
-		for (int i=0;i<=FilterOrder;i++){
-			output +=  filterCooNum[i]*X[i];
-		}
-		for (int i=0;i<=FilterOrder;i++){
-			output -=  filterCooDen[i]*Y[i];
-		}
-		// shift outputs samples register
-		for (int i=FilterOrder;i>0;i--){
-			Y[i]=Y[i-1];
-		}
-		Y[0]=output; // map output
-		controlOutput[0]=Y[0];
-
-		return Y[0];// map output
-	*/
 
