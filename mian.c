@@ -96,21 +96,18 @@ int16_t accellRaw[3];
 int16_t gyroRaw[3];
 // Scaled data from IMU
 float accellScaled[3]; // Accelerations in Local Frame
-float gyroScaled[3];
-float gyroBias[3]={0,0,0};
-// Angle calculated based on accelerometr
-float accellAngle[3];
-// Determined Orientation
-float orientationAngles[3]={0,0,0};
+float gyroScaled[3]; // Angular Velocity in Local Frame
+float gyroBias[3]; // Measured Bias for Gyroscope
+float gyroGlobal[3]; // Angular Velocity in Global Frame
+float accellAngle[3]; // Global orientation angle based on accelerations
+
+float orientationAngles[3]={0,0,0}; // Determined Orientation
 
 // diagnostics variables
 bool initRequest,NavigInitDone=false;
 HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus;
 TickType_t cycleStart,cycleDuration;
 // debugging variables:
-
-int temp1=0;
-float gyroScaledFilterdZ[1];
 bool outputMapFcn;
 float debugMatrix[2];
 /* USER CODE END 0 */
@@ -554,34 +551,32 @@ void StartDefaultTask(void const * argument)
 
 	  if (initRequest == true){
 	  	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+	  	if (pressStartTime == 0) {
+	  		// Start the timer
+	  		pressStartTime = xTaskGetTickCount();
+	  		gyroBiasSum[0]=0.0f;
+	  		gyroBiasSum[1]=0.0f;
+	  		gyroBiasSum[2]=0.0f;
+	  		n=0;
+	  		}
+	  	else if((xTaskGetTickCount() - pressStartTime) < initTime){
 
-	  		gyroBias[0]=0;
-	  		gyroBias[1]=0;
-	  		gyroBias[2]=0;
+	  		for (int i=0;i<=2;i++){
+	  			gyroBiasSum[i]+=gyroScaled[i];
+	  			}
+	  		n++;
+	  		vTaskDelay(50);
+	  		}
+	  	else{
 
-	  		if (pressStartTime == 0) {
-	  			      // Start the timer
-	  			  pressStartTime = xTaskGetTickCount();
-	  			  }
-	  		else if((xTaskGetTickCount() - pressStartTime) < initTime){
-	  				  	 for (int i=0;i<=2;i++){
-	  				  		 gyroBiasSum[i]+=gyroScaled[i];
-
-	  				  	 }
-	  				  	n++;
-	  				  	 vTaskDelay(100);
-	  			  }
-	  		else{
-
-	  			  for (int i=1;i<=2;i++){
-	  				  gyroBias[i]=gyroBiasSum[i]/n;
-	  			  	  }
-	  			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-	  			  pressStartTime = 0;
-	  			  n=0;
-	  			  NavigInitDone = true;
-	  			  initRequest = false;
+	  		for (int i=0;i<=2;i++){
+	  			gyroBias[i]= (gyroBiasSum[i]/((float)n));
 	  			 }
+	  		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+	  		pressStartTime = 0;
+	  		NavigInitDone = true;
+	  		initRequest = false;
+	  		}
 	  	}
   }
 
@@ -628,9 +623,10 @@ void processInputDataFcn(void const * argument)
 	  //outputMapFcn = true;
 	  accelCalc(accellRaw, accellScaled , accellAngle);
 	  gyroCalc(gyroRaw,gyroScaled);
-	  kalmanFilter(accellAngle, gyroScaled, orientationAngles, accellScaled, gyroBias, NavigInitDone);
-	  //orientationAngles[2]+= Ts*ellipFilter(gyroScaled,gyroScaledFilterdZ);
-	  YawEvaluate(orientationAngles,gyroScaled,gyroBias,NavigInitDone,debugMatrix);
+
+	  YawEvaluate(orientationAngles,gyroScaled,gyroBias,NavigInitDone,gyroGlobal);
+	  kalmanFilter(accellAngle, gyroGlobal, orientationAngles, accellScaled, gyroBias, NavigInitDone);
+
 	  if (NavigInitDone == true)NavigInitDone=false;
 	  //outputMapFcn = false;
 	  xSemaphoreGive(inputsCalculated_S_Handle);
