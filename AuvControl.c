@@ -12,6 +12,10 @@
 #define Ts 0.05
 #define PI 3.141592
 
+int rollQuarter,pitchQuarter=0;
+float Q=0.1;
+float V=1.2;
+
 float deg2rad(float input){
 	return input*PI/180.0;
 }
@@ -152,9 +156,9 @@ void gyroCalc(int16_t GyroDataRaw[3], float GyroScaledData[3]){
 
 
 
-void kalmanFilter(float AccellAngle[3], float GyroScaledData[3], float OrientationAngles[3], float AccellScaled[3],float gyroBias[3], bool NavigInitDone){
-	static const float PredictErr=0.1; //Q Covariance ...
-	static const float CorrectErr = 1.2; //R Covariance ...
+void kalmanFilter(float AccellAngle[3], float GyroGlobal[3], float OrientationAngles[3], float AccellScaled[3],float gyroBias[3], bool NavigInitDone){
+	float PredictErr; //Q Covariance ...
+	float CorrectErr; //R Covariance ...
 	static float K[2] = {0,0}; // Kalman Gain
 	static float xCorrect[2] = {0,0};
 	static float pPredict[2] = {1,1};
@@ -162,35 +166,75 @@ void kalmanFilter(float AccellAngle[3], float GyroScaledData[3], float Orientati
 	//static float result[2];
 	//static int quart[2]={1,1};
 
-
-
+	PredictErr=Q;
+	CorrectErr=V;
 		for (int i=0;i<=1;i++){
-		// 1. Prediction Phase
-		xPredict[i] = xCorrect[i] + (Ts * (GyroScaledData[i]-gyroBias[i])); //State prediction
-		pPredict[i] = pCorrect[i] + PredictErr; //Covariance prediction
-		K[i] = pPredict[i]/(CorrectErr + pPredict[i]); //Kalman's Gain calculation
+			// 1. Prediction Phase
+			xPredict[i] = xCorrect[i] + (Ts * (GyroGlobal[i])); //State prediction
+			pPredict[i] = pCorrect[i] + PredictErr; //Covariance prediction
+			K[i] = pPredict[i]/(CorrectErr + pPredict[i]); //Kalman's Gain calculation
 
-		// 2. Correction phase
-		xCorrect[i] = xPredict[i] + K[i]*(AccellAngle[i] - xPredict[i]); //State correction
-		pCorrect[i] = (1 - K[i])*pPredict[i]; //Covariance correction
-		//result[i]= xCorrect[i]; //output mapping
+			// 2. Correction phase
+			xCorrect[i] = xPredict[i] + K[i]*(AccellAngle[i] - xPredict[i]); //State correction
+			pCorrect[i] = (1 - K[i])*pPredict[i]; //Covariance correction
+			//OrientationAngles[i]=xCorrect[i];
 
-		//if (quart == 1 && result[i]>90) quart = 1;
-		//if (quart == 1 && result[i]>90) quart = 1;
+			if (i == 0){ // if roll is calculated
+				if (AccellScaled[2]>=0.0f){  // zAccel >= 0 ...
+					if (AccellScaled[1]>=0.0f){ // ... and yAccel >= 0
+						// I quarter
+						OrientationAngles[i]=xCorrect[i];
+						rollQuarter = 1;
+					}
+					else{ // ... and yAccel < 0
+						// II quarter
+						OrientationAngles[i]=xCorrect[i];
+						rollQuarter = 2;
+					}
+				}
+				else{	// zAccel < 0 ...
+					if (AccellScaled[1]>=0.0f){  // ... and yAccel >= 0
+						// IV quarter
+						OrientationAngles[i]=180.0f-xCorrect[i];
+						rollQuarter = 4;
+					}
+					else{ // ... and yAccel < 0
+						// III quarter
+						OrientationAngles[i]=-180.0f+fabs(xCorrect[i]);
+						rollQuarter = 3;
+					}
+				}
+			}
 
-		if (i==0){
-			if (AccellScaled[1]>0 && AccellScaled[2]>0) OrientationAngles[i]=xCorrect[i];				// 1st quarter
-			else if (AccellScaled[1]>0 && AccellScaled[2]<0) OrientationAngles[i]= 180 - xCorrect[i];	// 2nd quarter
-			else if (AccellScaled[1]<0 && AccellScaled[2]<0) OrientationAngles[i]= -180 - xCorrect[i];			// 3rd quarter
-			else if (AccellScaled[1]<0 && AccellScaled[2]>0) OrientationAngles[i]= xCorrect[i];	// 4rd quarter
-		}
-		else {
-			if (AccellScaled[0]<0 && AccellScaled[2]>0) OrientationAngles[i]=xCorrect[i];				// 1st quarter
-			else if (AccellScaled[0]<0 && AccellScaled[2]<0) OrientationAngles[i]= 180 - xCorrect[i];	// 2nd quarter
-			else if (AccellScaled[0]>0 && AccellScaled[2]<0) OrientationAngles[i]= - 180 - xCorrect[i];	// 3rd quarter
-			else if (AccellScaled[0]>0 && AccellScaled[2]>0) OrientationAngles[i]= xCorrect[i];			// 4th quarter
-		}
-		}
+			else{ // if pitch is calculated
+				if (AccellScaled[2]>=0.0f){  // zAccel >= 0 ...
+					if (AccellScaled[0]>=0.0f){ // ... and yAccel >= 0
+						// IV quarter
+						OrientationAngles[i]=xCorrect[i];
+						pitchQuarter = 4;
+					}
+					else{ // ... and yAccel < 0
+						// III quarter
+						OrientationAngles[i]=(xCorrect[i]);
+						pitchQuarter = 3;
+					}
+				}
+				else{	// zAccel < 0 ...
+					if (AccellScaled[0]>=0.0f){// ... and yAccel >= 0
+						// I quarter
+						OrientationAngles[i]=-180+fabs(xCorrect[i]);
+						pitchQuarter = 1;
+					}
+					else{ // ... and yAccel < 0
+						// II quarter
+						OrientationAngles[i]=180.0f-xCorrect[i];
+						pitchQuarter = 2;
+					}
+				}
+			}
+
+
+		} // end of for()
 
 
 		if (NavigInitDone == true){
@@ -208,7 +252,7 @@ void kalmanFilter(float AccellAngle[3], float GyroScaledData[3], float Orientati
 //matrixMultiply
 
 
-void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias[3],bool NavigInitDone, float debugMatrix[2]){
+void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias[3],bool NavigInitDone, float gyroGlobal[3]){
 
 	float R[3][3],Rtemp[3][3],Rroll[3][3],Rpitch[3][3],Ryaw[3][3],wGlobal[3][1],wLocal[3][1];
 	R_roll(orientationAngles[0],Rroll);
@@ -216,9 +260,9 @@ void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias[
 	R_yaw(orientationAngles[2],Ryaw);
 
 	matrixMultiply(3,3,Ryaw,3,3,Rpitch,Rtemp);// R = Ryaw * Rpitch
-	debugMatrix[0]=Rtemp[0][0];
+
 	matrixMultiply(3,3,Rtemp,3,3,Rroll,R); // R = R * Rroll
-	debugMatrix[0]=R[0][0];
+
 	wGlobal[0][0] = 0;
 	wGlobal[1][0] = 0;
 	wGlobal[2][0] = 0;
@@ -227,6 +271,10 @@ void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias[
 	wLocal[2][0] = (GyroScaled[2]-gyroBias[2]);
 
 	matrixMultiply(3,3,R,3,1,wLocal,wGlobal); // transform angular velocity from local to global frame
+
+	gyroGlobal[0]=wGlobal[0][0];
+	gyroGlobal[1]=wGlobal[0][1];
+	gyroGlobal[2]=wGlobal[0][2];
 
 	orientationAngles[2]+= wGlobal[2][0]*Ts;
 	if (NavigInitDone == true)orientationAngles[2] = 0;
