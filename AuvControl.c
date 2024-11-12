@@ -8,13 +8,21 @@
 
 
 
-#define I2C_TIMEOUT 200
+#define I2C_TIMEOUT 50
 #define Ts 0.05
-#define PI 3.141592
+#define CLK 100000000
+
+
+#define PI 3.141592f
+#define g 9.81f
+#define waterDensity  998.2f
+#define hydrofoilFrontArea 1 // [m^2] forntal area of each hydro foil
+#define d1_stere 0.19 // [m] distance between center of hydro foil
 
 int rollQuarter,pitchQuarter=0;
-float Q=0.1;
-float V=1.2;
+float debugMatrix[3];
+float Q=0.2; //0.1;
+float V=1.7; //1.2;
 
 float deg2rad(float input){
 	return input*PI/180.0;
@@ -48,13 +56,14 @@ void matrixMultiply(int rowsA, int colA, float A[rowsA][colA],
                     int rowsB, int colB, float B[rowsB][colB],
                     float C[rowsA][colB]) {
 
+	// setting C matrix to 0
     for (int i = 0; i < rowsA; i++) {
         for (int j = 0; j < colB; j++) {
             C[i][j] = 0;
         }
     }
 
-
+    // multiplying
     for (int i = 0; i < rowsA; i++) {
         for (int j = 0; j < colB; j++) {
             for (int k = 0; k < colA; k++) {
@@ -65,6 +74,79 @@ void matrixMultiply(int rowsA, int colA, float A[rowsA][colA],
 }
 
 
+
+bool isSet(float input, float derivative , float setpoint , float input_offset , float derivative_offset ){
+
+	bool output;
+
+	if (fabs(input) <= (setpoint + input_offset) ){
+		if (fabs(derivative) <= (derivative_offset)){
+			output = true;
+		}
+		else output = false;
+	}
+	else output = false;
+
+	return output;
+}
+
+/*
+typedef struct{
+	// Max size of tab will be 10
+
+	// to define before use
+	 bool IIR; // true if its IIR type filter
+	 int order; // max is 10
+	 float numMatrix[11];
+	 float denumMatrix[11];
+	// memory
+	 float inRegister[11]; // need to be init
+	 float outRegister[11]; // need to be init
+}filterStruct;
+
+float filter(filterStruct *filterData ,float input, bool NavigInitDone){
+
+// If filter type is FIR, int denum = 0 ; float denumMatrix = NULL
+
+	float output=0.0f;
+
+	if (NavigInitDone == true ){
+		for (int i=0;i<=10;i++){
+			filterData->inRegister[i]=0.0f;
+			filterData->outRegister[i]=0.0f;
+		}
+	}
+
+	// shift in register
+	for (int i=filterData->order; i>0 ; i--){
+		filterData->inRegister[i]=filterData->inRegister[i-1];
+	}
+
+	// add curect input to register
+	filterData->inRegister[0]=input;
+	// calc output
+
+	for (int i=0; i<= filterData->order ; i++){
+		output+= filterData->inRegister[i]*filterData->numMatrix[i];
+	}
+
+	if (filterData->IIR == true ){  // - if this is IIR filter
+
+		for (int i=1; i <= filterData->order ; i++){
+			output -= filterData->outRegister[i]*filterData->denumMatrix[i];
+		}
+		// shift output register
+		for (int i=filterData->order; i>0 ; i--){
+			filterData->outRegister[i]=filterData->outRegister[i-1];
+		}
+		filterData->outRegister[0]=output;
+
+	}
+
+	return output;
+}
+
+*/
 HAL_StatusTypeDef mpu6050_init(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS){
 // initialization of MPU6050
 // input data:
@@ -103,7 +185,7 @@ HAL_StatusTypeDef mpu6050_init(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS){
 
 
 
-HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_t AccelDataRaw[3], int16_t GyroDataRaw[3]){
+HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_t AccellDataRaw[3], int16_t GyroDataRaw[3]){
 // Get measurement from mpu 6050 measurement unit
 // Inputs:
 // I2C_HandleTypeDef *hi2c - I2c Handler
@@ -120,9 +202,9 @@ HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_
 		status=HAL_I2C_Master_Receive(hi2c, ADDRESS, data, 14 , I2C_TIMEOUT); // read 14 bytes
 	}
 
-	AccelDataRaw[0] = (int16_t)(data[0]<<8 | data[1]); // Gyro -> X Axis
-	AccelDataRaw[1] = (int16_t)(data[2]<<8 | data[3]); // Gyro -> Y Axis
-	AccelDataRaw[2] = (int16_t)(data[4]<<8 | data[5]); // Gyro -> Z Axis
+	AccellDataRaw[0] = (int16_t)(data[0]<<8 | data[1]); // Gyro -> X Axis
+	AccellDataRaw[1] = (int16_t)(data[2]<<8 | data[3]); // Gyro -> Y Axis
+	AccellDataRaw[2] = (int16_t)(data[4]<<8 | data[5]); // Gyro -> Z Axis
 
 	GyroDataRaw[0] =  (int16_t)(data[8]<<8 | data[9]);   // Accell -> X Axis
 	GyroDataRaw[1] =  (int16_t)(data[10]<<8 | data[11]); // Accell -> Y Axis
@@ -131,32 +213,33 @@ HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_
 }
 
 
-void accelCalc(int16_t AccelDataRaw[3],float Acceleration[3],float AccelAngle[3]){
+void accelCalc(int16_t accellDataRaw[3],float accellLocal[3],float orientationAnccelGlobal[3]){
 
 	// AccelDataRaw is input tab, data from accelerometr, size of AccelDataRaw shall be 3;
 	// Acceleration is output tab, Acceleration in local frame, size of Acceleration shall be 3;
 	// AccelAngle is output tab, Orientation calculated based on accelerometr, size of AccelAngle shall be 3;
 
 	for (uint8_t i=0; i<=2 ; i++){
-		Acceleration[i]=AccelDataRaw[i]/16384.0f;
+		accellLocal[i]=accellDataRaw[i]/16384.0f;
 	}
 
-	AccelAngle[0]=atan2(Acceleration[1],sqrt(pow(Acceleration[0],2)+pow(Acceleration[2],2)))*180/PI;
-	AccelAngle[1]=atan2(-Acceleration[0],sqrt(pow(Acceleration[1],2)+pow(Acceleration[2],2)))*180/PI;
+	//orientationAnccelGlobal[0]=atan2(accellLocal[1],sqrt(pow(accellLocal[0],2)+pow(accellLocal[2],2)))*180/PI;
+	orientationAnccelGlobal[0]=atan2(accellLocal[1],accellLocal[2])*180/PI;
+	orientationAnccelGlobal[1]=atan2(-accellLocal[0],sqrt(pow(accellLocal[1],2)+pow(accellLocal[2],2)))*180/PI;
 }
 
 
-void gyroCalc(int16_t GyroDataRaw[3], float GyroScaledData[3]){
+void gyroCalc(int16_t gyroDataRaw[3], float gyroDataScaled[3]){
 
 	for (int i=0; i<=2; i++){
-		GyroScaledData[i]=GyroDataRaw[i]/131.0f; // ustalic czy ma tu być minus czy nie
+		gyroDataScaled[i]=gyroDataRaw[i]/131.0f; // ustalic czy ma tu być minus czy nie
 	}
 }
 
 
 
 
-void kalmanFilter(float AccellAngle[3], float GyroGlobal[3], float OrientationAngles[3], float AccellScaled[3],float gyroBias[3], bool NavigInitDone){
+void kalmanFilter(float orientationAccellGlobal[3], float gyroGlobal[3], float orientationGlobal[3], float accellLocal[3],float gyroBias[3], bool NavigInitDone){
 	float PredictErr; //Q Covariance ...
 	float CorrectErr; //R Covariance ...
 	static float K[2] = {0,0}; // Kalman Gain
@@ -170,115 +253,213 @@ void kalmanFilter(float AccellAngle[3], float GyroGlobal[3], float OrientationAn
 	CorrectErr=V;
 		for (int i=0;i<=1;i++){
 			// 1. Prediction Phase
-			xPredict[i] = xCorrect[i] + (Ts * (GyroGlobal[i])); //State prediction
+			xPredict[i] = xCorrect[i] + (Ts * (gyroGlobal[i])); //State prediction
 			pPredict[i] = pCorrect[i] + PredictErr; //Covariance prediction
 			K[i] = pPredict[i]/(CorrectErr + pPredict[i]); //Kalman's Gain calculation
 
 			// 2. Correction phase
-			xCorrect[i] = xPredict[i] + K[i]*(AccellAngle[i] - xPredict[i]); //State correction
+			xCorrect[i] = xPredict[i] + K[i]*(orientationAccellGlobal[i] - xPredict[i]); //State correction
 			pCorrect[i] = (1 - K[i])*pPredict[i]; //Covariance correction
-			//OrientationAngles[i]=xCorrect[i];
+			orientationGlobal[i]=xCorrect[i];
 
+/*
 			if (i == 0){ // if roll is calculated
-				if (AccellScaled[2]>=0.0f){  // zAccel >= 0 ...
-					if (AccellScaled[1]>=0.0f){ // ... and yAccel >= 0
+				if (accellLocal[2]>=0.0f){  // zAccel >= 0 ...
+					if (accellLocal[1]>=0.0f){ // ... and yAccel >= 0
 						// I quarter
-						OrientationAngles[i]=xCorrect[i];
+						orientationGlobal[i]=xCorrect[i];
 						rollQuarter = 1;
 					}
 					else{ // ... and yAccel < 0
 						// II quarter
-						OrientationAngles[i]=xCorrect[i];
+						orientationGlobal[i]=xCorrect[i];
 						rollQuarter = 2;
 					}
 				}
 				else{	// zAccel < 0 ...
-					if (AccellScaled[1]>=0.0f){  // ... and yAccel >= 0
+					if (accellLocal[1]>=0.0f){  // ... and yAccel >= 0
 						// IV quarter
-						OrientationAngles[i]=180.0f-xCorrect[i];
+						orientationGlobal[i]=180.0f-xCorrect[i];
 						rollQuarter = 4;
 					}
 					else{ // ... and yAccel < 0
 						// III quarter
-						OrientationAngles[i]=-180.0f+fabs(xCorrect[i]);
+						orientationGlobal[i]=-180.0f+fabs(xCorrect[i]);
 						rollQuarter = 3;
 					}
 				}
 			}
 
 			else{ // if pitch is calculated
-				if (AccellScaled[2]>=0.0f){  // zAccel >= 0 ...
-					if (AccellScaled[0]>=0.0f){ // ... and yAccel >= 0
+				if (accellLocal[2]>=0.0f){  // zAccel >= 0 ...
+					if (accellLocal[0]>=0.0f){ // ... and yAccel >= 0
 						// IV quarter
-						OrientationAngles[i]=xCorrect[i];
+						orientationGlobal[i]=xCorrect[i];
 						pitchQuarter = 4;
 					}
 					else{ // ... and yAccel < 0
 						// III quarter
-						OrientationAngles[i]=(xCorrect[i]);
+						orientationGlobal[i]=(xCorrect[i]);
 						pitchQuarter = 3;
 					}
 				}
 				else{	// zAccel < 0 ...
-					if (AccellScaled[0]>=0.0f){// ... and yAccel >= 0
+					if (accellLocal[0]>=0.0f){// ... and yAccel >= 0
 						// I quarter
-						OrientationAngles[i]=-180+fabs(xCorrect[i]);
+						orientationGlobal[i]=-180+fabs(xCorrect[i]);
 						pitchQuarter = 1;
 					}
 					else{ // ... and yAccel < 0
 						// II quarter
-						OrientationAngles[i]=180.0f-xCorrect[i];
+						orientationGlobal[i]=180.0f-xCorrect[i];
 						pitchQuarter = 2;
 					}
 				}
 			}
-
-
+*/
 		} // end of for()
 
 
 		if (NavigInitDone == true){
-				xCorrect[0]=AccellAngle[0];
-				xCorrect[1]=AccellAngle[1];
-				pPredict[0]=1;
-				pPredict[1]=1;
+				xCorrect[0]=orientationAccellGlobal[0];
+				xCorrect[1]=orientationAccellGlobal[1];
+				pPredict[0]=1.0f;
+				pPredict[1]=1.0f;
 			}
 
 }
 
 
 
-//float R_yaw(float yaw, float R[3][3]){
-//matrixMultiply
+void yawEvaluate(float orientationGlobal[3], float angVeloYaw, bool NavigInitDone){
+	orientationGlobal[2]+= angVeloYaw*Ts;
+	if (NavigInitDone == true) orientationGlobal[2] = 0;
+}
 
-
-void YawEvaluate(float orientationAngles[3], float GyroScaled[3],float gyroBias[3],bool NavigInitDone, float gyroGlobal[3]){
+void vectTransform(float orientationGlobal[3], float gyroLocal[3],float gyroBias[3],float gyroGlobal[3],float accellLocal[3], float accellGlobal[3]){
 
 	float R[3][3],Rtemp[3][3],Rroll[3][3],Rpitch[3][3],Ryaw[3][3],wGlobal[3][1],wLocal[3][1];
-	R_roll(orientationAngles[0],Rroll);
-	R_pitch(orientationAngles[1],Rpitch);
-	R_yaw(orientationAngles[2],Ryaw);
-
+	// Calculate each roll matrix
+	R_roll(orientationGlobal[0],Rroll);
+	R_pitch(orientationGlobal[1],Rpitch);
+	R_yaw(orientationGlobal[2],Ryaw);
+	// Calculate general roll matrix
 	matrixMultiply(3,3,Ryaw,3,3,Rpitch,Rtemp);// R = Ryaw * Rpitch
-
 	matrixMultiply(3,3,Rtemp,3,3,Rroll,R); // R = R * Rroll
 
-	wGlobal[0][0] = 0;
-	wGlobal[1][0] = 0;
-	wGlobal[2][0] = 0;
-	wLocal[0][0] = (GyroScaled[0]-gyroBias[0]);
-	wLocal[1][0] = (GyroScaled[1]-gyroBias[1]);
-	wLocal[2][0] = (GyroScaled[2]-gyroBias[2]);
+	//wGlobal[0][0] = 0; // unnecessary propably
+	//wGlobal[1][0] = 0;
+	//wGlobal[2][0] = 0;
 
-	matrixMultiply(3,3,R,3,1,wLocal,wGlobal); // transform angular velocity from local to global frame
-
+	// Calculate Angular Velocity Matrix in global frame based on Rotation Matrix
+	wLocal[0][0] = (gyroLocal[0]-gyroBias[0]);
+	wLocal[1][0] = (gyroLocal[1]-gyroBias[1]);
+	wLocal[2][0] = (gyroLocal[2]-gyroBias[2]);
+	matrixMultiply(3,3,R,3,1,wLocal,wGlobal); // transform
 	gyroGlobal[0]=wGlobal[0][0];
 	gyroGlobal[1]=wGlobal[0][1];
 	gyroGlobal[2]=wGlobal[0][2];
 
-	orientationAngles[2]+= wGlobal[2][0]*Ts;
-	if (NavigInitDone == true)orientationAngles[2] = 0;
+	// Calculate Linear acceleration Matrix in global frame based on Rotation Matrix
+	wLocal[0][0] = accellLocal[0];
+	wLocal[1][0] = accellLocal[1];
+	wLocal[2][0] = accellLocal[2];
+	matrixMultiply(3,3,R,3,1,wLocal,wGlobal); // transform
+	accellGlobal[0]=wGlobal[0][0];
+	accellGlobal[1]=wGlobal[0][1];
+	accellGlobal[2]=wGlobal[0][2]-1; // Substract 1g -> gravity to get pure linear accell
+
+}
+
+void positionEvaluate(float positionGlobal[3],float accellGlobal[3] ,bool NavigInitDone){
+	/// Low-Pass Filter here???
+	static float velocityGlobal[3]={0.0f};
+	//float temp;
+
+	for (int i=0;i<=2;i++){
+			//temp=roundf(g*accellGlobal[i]*Ts*10000)/100; // cm/s
+			velocityGlobal[i]+=g*accellGlobal[i]*Ts;
+			}
+
+	for (int i=0;i<=2;i++){
+			positionGlobal[i]+= velocityGlobal[i]*Ts; // cm
+			}
+
+	if (NavigInitDone == true){
+		for (int i=0;i<=2;i++){
+			positionGlobal[i]=0.0f;
+			velocityGlobal[i]=0.0f;
+		}
+	}
+}
+
+void velocityLocal(float *velocity, float accelerationLocal[3], float orientationGlobal[3], bool NavigInitDone){
+/* Matrix [0;0;1] transform with invers rotation matrix (global to local )
+ *                                                                -sin(P)/(cos(P)^2 + sin(P)^2)
+(cos(P)*sin(R))/(cos(P)^2*cos(R)^2 + cos(P)^2*sin(R)^2 + cos(R)^2*sin(P)^2 + sin(P)^2*sin(R)^2)
+(cos(P)*cos(R))/(cos(P)^2*cos(R)^2 + cos(P)^2*sin(R)^2 + cos(R)^2*sin(P)^2 + sin(P)^2*sin(R)^2)
+ *
+ */
+
+	*velocity += g *( accelerationLocal[0] + sin(deg2rad(orientationGlobal[1])) )* Ts;
+	debugMatrix[0]= sin(deg2rad(orientationGlobal[1]));
+	debugMatrix[1]= accelerationLocal[0] + sin(deg2rad(orientationGlobal[1]));
+	if (NavigInitDone == true){
+		*velocity = 0.0f;
+	}
+	// Low Pass Filter maybe or use only 2 digits
 }
 
 
 
+
+float PIDcontroller(regulator_PID *ctrlParam, float input,float setpoint, bool reset){
+	// returns required torque
+	float error = input - setpoint;
+	float derivative = (ctrlParam->Kd * ctrlParam->Nd * (error - ctrlParam->error_prev)) / (1 + (ctrlParam->Nd * Ts));
+	float torqueDemand = ctrlParam->Kp*error + derivative + ctrlParam->Ki*ctrlParam->integrator;
+
+	ctrlParam->error_prev=error; // store prevoius error
+
+	if (torqueDemand > ctrlParam->outMax) torqueDemand = ctrlParam->outMax; // Max output limitation
+	else if (torqueDemand < ctrlParam->outMin) torqueDemand = ctrlParam->outMin; // Min output limitation
+	else ctrlParam-> integrator += error*Ts; // integration with anty wind-up (clamping method)
+
+
+	if (reset == true){
+			ctrlParam->integrator=0.0f;
+			ctrlParam->error_prev=0.0f;
+			torqueDemand = 0.0f;
+		}
+
+	return torqueDemand;
+}
+
+float maxTorqueAvailable(torque2angleStruct *scalingParam, float forceArm ,float velocity){
+	return waterDensity*hydrofoilFrontArea*scalingParam->maxLiftCoe*forceArm*pow(velocity,2);
+}
+
+float torque2angle(float torqueDemand, torque2angleStruct *scalingParam, float forceArm , float velocity ){
+	// Calculate right servo angle, left shall be set to the same or negative value
+	float Cy=(torqueDemand/forceArm)/(waterDensity*hydrofoilFrontArea*pow(velocity,2));
+	float angleRight=0;
+		for (int i=0; i<10; i++){
+			angleRight = angleRight + scalingParam->coe[i]*pow(Cy,(10-i));
+		}
+		angleRight=angleRight+scalingParam->coe[10];
+
+		if (angleRight > scalingParam->maxStableAngle ){
+			angleRight = scalingParam->maxStableAngle;
+		}
+		else if (angleRight < -(scalingParam->maxStableAngle) ){
+			angleRight = -(scalingParam->maxStableAngle);
+		}
+		return angleRight;
+}
+
+
+void ServoSet(float servoAngle[2]){
+
+
+
+}
