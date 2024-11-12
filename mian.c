@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,9 +62,12 @@ osThreadId defaultTaskHandle;
 osThreadId ReadInputHandle;
 osThreadId ProcInputDataHandle;
 osThreadId MapOutputHandle;
+osThreadId ControllerHandle;
+osThreadId StateControllerHandle;
 osMutexId uartMutexHandle;
 osSemaphoreId inputsReaded_S_Handle;
 osSemaphoreId inputsCalculated_S_Handle;
+osSemaphoreId controlDone_S_Handle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -80,6 +84,8 @@ void StartDefaultTask(void const * argument);
 void readInputFcn(void const * argument);
 void processInputDataFcn(void const * argument);
 void MapOutputFunction(void const * argument);
+void ControllerFcn(void const * argument);
+void StartTask06(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -89,27 +95,54 @@ void MapOutputFunction(void const * argument);
 /* USER CODE BEGIN 0 */
 
 /* Global Variables */
+// Controling constants
 #define Ts 0.05 // sampling time [s]
 #define TaskSamplingTime_ms 50
+
+// Physical AUV constants
+#define PI 3.141592f
+#define g 9.81f
+#define waterDensity  998.2f
+#define hydrofoilFrontArea 1 // [m^2] forntal area of each hydro foil
+#define d1_stere 0.19 // [m] distance between center of hydro foil
+
+
 // Raw data from IMU
 int16_t accellRaw[3];
 int16_t gyroRaw[3];
-// Scaled data from IMU
-float accellScaled[3]; // Accelerations in Local Frame
-float gyroScaled[3]; // Angular Velocity in Local Frame
-float gyroBias[3]; // Measured Bias for Gyroscope
-float gyroGlobal[3]; // Angular Velocity in Global Frame
-float accellAngle[3]; // Global orientation angle based on accelerations
 
-float orientationAngles[3]={0,0,0}; // Determined Orientation
+// Local Body Frame
+float accellLocal[3]; // Accelerations in Local Frame
+float gyroLocal[3]; // Angular Velocity in Local Frame
+float gyroBias[3]; // Measured Bias for Gyroscope
+float orientationAccelLocal[3]; // Global orientation angle based on accelerations
+float velocityXLocal=0.6f; // Linear velocity in local frame, axis X // Fixed value
+
+// Global Body Frame
+float accellGlobal[3];
+float gyroGlobal[3]; // Angular Velocity in Global Frame
+float orientationGlobal[3]={0.0f}; // Determined Orientation
+float angularVelocityGlobal[3]; // Rate of changes of determined orientation
+float positionGlobal[3]={0.0f};
+
+// Control variables
+float orientationSetpoint[3]; //
+float stereRequest[2];
+bool initRequest,NavigInitDone=false; // Initialization
+
+bool RollControlerActive;
+bool PitchControlerActive;
+bool YawControlerActive;
+
 
 // diagnostics variables
-bool initRequest,NavigInitDone=false;
-HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus;
-TickType_t cycleStart,cycleDuration;
+HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus; // communication diagnostic
+TickType_t cycleStart,cycleDuration; // cycle duration diagnostic
+
 // debugging variables:
-bool outputMapFcn;
-float debugMatrix[2];
+bool taskExec;
+float test[3];
+
 /* USER CODE END 0 */
 
 /**
@@ -170,6 +203,10 @@ int main(void)
   osSemaphoreDef(inputsCalculated_S_);
   inputsCalculated_S_Handle = osSemaphoreCreate(osSemaphore(inputsCalculated_S_), 1);
 
+  /* definition and creation of controlDone_S_ */
+  osSemaphoreDef(controlDone_S_);
+  controlDone_S_Handle = osSemaphoreCreate(osSemaphore(controlDone_S_), 1);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -198,6 +235,14 @@ int main(void)
   /* definition and creation of MapOutput */
   osThreadDef(MapOutput, MapOutputFunction, osPriorityNormal, 0, 256);
   MapOutputHandle = osThreadCreate(osThread(MapOutput), NULL);
+
+  /* definition and creation of Controller */
+  osThreadDef(Controller, ControllerFcn, osPriorityAboveNormal, 0, 256);
+  ControllerHandle = osThreadCreate(osThread(Controller), NULL);
+
+  /* definition and creation of StateController */
+  osThreadDef(StateController, StartTask06, osPriorityNormal, 0, 128);
+  StateControllerHandle = osThreadCreate(osThread(StateController), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -395,7 +440,7 @@ static void MX_TIM3_Init(void)
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 0;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -421,7 +466,7 @@ static void MX_TIM3_Init(void)
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
@@ -536,7 +581,7 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
-	float gyroBiasSum[3]={0,0,0};
+	float gyroBiasSum[3]={0.0f};
 	const TickType_t initTime = pdMS_TO_TICKS(3000); // 3 seconds
 	TickType_t pressStartTime = 0;
 	int n=0;
@@ -562,7 +607,7 @@ void StartDefaultTask(void const * argument)
 	  	else if((xTaskGetTickCount() - pressStartTime) < initTime){
 
 	  		for (int i=0;i<=2;i++){
-	  			gyroBiasSum[i]+=gyroScaled[i];
+	  			gyroBiasSum[i]+=gyroLocal[i];
 	  			}
 	  		n++;
 	  		vTaskDelay(50);
@@ -596,10 +641,10 @@ void readInputFcn(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-	  cycleStart =xTaskGetTickCount();
+	  cycleStart = xTaskGetTickCount(); // start counting time of 1 cycle duration
 	  //osSemaphoreId inputsReaded_S_Handle;
 	  //osSemaphoreId inputsCaluclated_S_Handle;
-	mpuCommStatus = mpu6050_update(&hi2c3,MPU6050_ADDRESS,accellRaw,gyroRaw);
+	mpuCommStatus = mpu6050_update(&hi2c3,MPU6050_ADDRESS,accellRaw,gyroRaw); // read data from MPU
 	xSemaphoreGive(inputsReaded_S_Handle);
 	vTaskDelay(pdMS_TO_TICKS(TaskSamplingTime_ms));
   }
@@ -621,12 +666,19 @@ void processInputDataFcn(void const * argument)
   {
 	  if(xSemaphoreTake(inputsReaded_S_Handle,portMAX_DELAY)==pdTRUE){
 	  //outputMapFcn = true;
-	  accelCalc(accellRaw, accellScaled , accellAngle);
-	  gyroCalc(gyroRaw,gyroScaled);
+	  // Scale data and calculate angle based on acell
+	  accelCalc(accellRaw, accellLocal , orientationAccelLocal);
+	  gyroCalc(gyroRaw,gyroLocal);
+	  // transform acceleration an angular velocity to global frame
+	  vectTransform(orientationGlobal,gyroLocal,gyroBias,gyroGlobal,accellLocal,accellGlobal);
+	  // filtering
+	  yawEvaluate(orientationGlobal, gyroGlobal[2] ,NavigInitDone);
+	  kalmanFilter(orientationAccelLocal, gyroGlobal, orientationGlobal, accellLocal, gyroBias, NavigInitDone);
 
-	  YawEvaluate(orientationAngles,gyroScaled,gyroBias,NavigInitDone,gyroGlobal);
-	  kalmanFilter(accellAngle, gyroGlobal, orientationAngles, accellScaled, gyroBias, NavigInitDone);
+	 //positionEvaluate(positionGlobal,accellGlobal,NavigInitDone);
+	 velocityLocal(&velocityXLocal,accellLocal,orientationGlobal,NavigInitDone);
 
+	 // if initialization procces active -> finish
 	  if (NavigInitDone == true)NavigInitDone=false;
 	  //outputMapFcn = false;
 	  xSemaphoreGive(inputsCalculated_S_Handle);
@@ -646,25 +698,124 @@ void processInputDataFcn(void const * argument)
 void MapOutputFunction(void const * argument)
 {
   /* USER CODE BEGIN MapOutputFunction */
+
+	// Start Servo PWM
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+
   /* Infinite loop */
   for(;;)
   {
-	 if(xSemaphoreTake(inputsCalculated_S_Handle,portMAX_DELAY)==pdTRUE){
-	char buff[50];
-	printf("RawData, %d, %d, %d, %d, %d, %d\n" ,accellRaw[0],accellRaw[1],accellRaw[2],gyroRaw[0],gyroRaw[1],gyroRaw[2]);
-	sprintf(buff,"Orientation, %.2f, %.2f, %.2f\n",orientationAngles[0],orientationAngles[1],orientationAngles[2]);
-	printf(buff);
-	//sprintf(buff,"Orientation, %.2f, %.2f, %.2f\n",orientationAngles[0],orientationAngles[1],orientationAngles[2]);
-	//printf(buff);
+	 if(xSemaphoreTake(controlDone_S_Handle,portMAX_DELAY)==pdTRUE){
+		 char buff[50];
+		 printf("RawData, %d, %d, %d, %d, %d, %d\n" ,accellRaw[0],accellRaw[1],accellRaw[2],gyroRaw[0],gyroRaw[1],gyroRaw[2]);
+		 sprintf(buff,"Orientation, %.2f, %.2f, %.2f\n",orientationGlobal[0],orientationGlobal[1],orientationGlobal[2]);
+		 printf(buff);
 
-	//printf("ScaledData, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f\n",accellScaled[0],accellScaled[1],accellScaled[2],gyroScaled[0],gyroScaled[1],gyroScaled[2]);
-	//HAL_GPIO_WritePin(GPIOA, SPI_SS_Pin , GPIO_PIN_RESET);
-	//uartStatus=HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 300);
-	//HAL_GPIO_WritePin(GPIOA, SPI_SS_Pin, GPIO_PIN_SET);
-		cycleDuration = (xTaskGetTickCount()- cycleStart); // calculate in ms
+
+		 cycleDuration = (xTaskGetTickCount()- cycleStart); // calculate in ms
 	 }
   }
   /* USER CODE END MapOutputFunction */
+}
+
+/* USER CODE BEGIN Header_ControllerFcn */
+/**
+* @brief Function implementing the Controller thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ControllerFcn */
+void ControllerFcn(void const * argument)
+{
+  /* USER CODE BEGIN ControllerFcn */
+
+	float torqueDemand;
+	float orientationGlobalPrev[3]={0.0f};
+
+	// Set parameters for regulator
+	torque2angleStruct torque2angleV0_6;
+		torque2angleV0_6.coe[0]=-45.488561;
+		torque2angleV0_6.coe[1]=148.794907;
+		torque2angleV0_6.coe[2]=75.992147;
+		torque2angleV0_6.coe[3]=-196.131888;
+		torque2angleV0_6.coe[4]=-45.962337;
+		torque2angleV0_6.coe[5]=100.708216;
+		torque2angleV0_6.coe[6]=12.085230;
+		torque2angleV0_6.coe[7]=-23.741009;
+		torque2angleV0_6.coe[8]=-1.283942;
+		torque2angleV0_6.coe[9]=14.986159;
+		torque2angleV0_6.coe[10]=0;
+		torque2angleV0_6.velocity=0.6;
+		torque2angleV0_6.maxLiftCoe=0.7816;
+		torque2angleV0_6.maxStableAngle=11;
+
+	regulator_PID rollController;
+		rollController.Kp=1.368792;
+		rollController.Ki=0.802290;
+		rollController.Kd=0.448888;
+		rollController.Nd=13.235897;
+
+
+
+
+
+  /* Infinite loop */
+  for(;;)
+  {
+	  if(xSemaphoreTake(inputsCalculated_S_Handle,portMAX_DELAY)==pdTRUE){
+
+		  if ( RollControlerActive == true ){
+			  rollController.outMax=maxTorqueAvailable(&torque2angleV0_6, d1_stere ,velocityXLocal);
+			  rollController.outMin=-rollController.outMax;
+			  torqueDemand=PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
+			  stereRequest[0]=torque2angle(torqueDemand,&torque2angleV0_6,d1_stere,velocityXLocal); // right stere angle
+			  stereRequest[1]=-stereRequest[0]; // left stere angle
+		  }
+		  else if (YawControlerActive == true ){
+			  rollController.outMax=maxTorqueAvailable(&torque2angleV0_6, d1_stere ,velocityXLocal);
+			  rollController.outMin=-rollController.outMax;
+			  torqueDemand=PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
+			  stereRequest[0]=torque2angle(torqueDemand,&torque2angleV0_6,d1_stere,velocityXLocal); // right stere angle
+			  stereRequest[1]= stereRequest[0]; // left stere angle
+		  }
+
+		  // Calculate Rate of changes of orientation
+		  for (int i=0; i< 3 ; i++){
+			  angularVelocityGlobal[i]= (orientationGlobal[i]-orientationGlobalPrev[i])/Ts;
+			  orientationGlobalPrev[i]= orientationGlobal[i];
+		  }
+
+
+		 xSemaphoreGive(controlDone_S_Handle);
+
+
+	  }
+  }
+  /* USER CODE END ControllerFcn */
+}
+
+/* USER CODE BEGIN Header_StartTask06 */
+/**
+* @brief Function implementing the StateController thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask06 */
+void StartTask06(void const * argument)
+{
+  /* USER CODE BEGIN StartTask06 */
+	//int state=0;
+	orientationSetpoint[0]=90;
+
+  /* Infinite loop */
+  for(;;)
+  {
+
+
+    vTaskDelay(200);
+  }
+  /* USER CODE END StartTask06 */
 }
 
 /**
