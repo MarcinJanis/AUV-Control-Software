@@ -64,6 +64,7 @@ osThreadId ProcInputDataHandle;
 osThreadId MapOutputHandle;
 osThreadId ControllerHandle;
 osThreadId StateControllerHandle;
+osThreadId ExternalCommuniHandle;
 osMutexId uartMutexHandle;
 osSemaphoreId inputsReaded_S_Handle;
 osSemaphoreId inputsCalculated_S_Handle;
@@ -85,7 +86,8 @@ void readInputFcn(void const * argument);
 void processInputDataFcn(void const * argument);
 void MapOutputFunction(void const * argument);
 void ControllerFcn(void const * argument);
-void StartTask06(void const * argument);
+void StateControlFcn(void const * argument);
+void ExternalCommunicationFcn(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -98,13 +100,14 @@ void StartTask06(void const * argument);
 // Controling constants
 #define Ts 0.05 // sampling time [s]
 #define TaskSamplingTime_ms 50
-
+#define StateControllerSamplingTime_ms 200
 // Physical AUV constants
 #define PI 3.141592f
 #define g 9.81f
 #define waterDensity  998.2f
 #define hydrofoilFrontArea 1 // [m^2] forntal area of each hydro foil
 #define d1_stere 0.19 // [m] distance between center of hydro foil
+#define d2_stere 0.4 // [m] distance between center of hydro foil
 
 
 // Raw data from IMU
@@ -116,7 +119,7 @@ float accellLocal[3]; // Accelerations in Local Frame
 float gyroLocal[3]; // Angular Velocity in Local Frame
 float gyroBias[3]; // Measured Bias for Gyroscope
 float orientationAccelLocal[3]; // Global orientation angle based on accelerations
-float velocityXLocal=0.6f; // Linear velocity in local frame, axis X // Fixed value
+float velocityXLocal=0.0f; //0.6f; // Linear velocity in local frame, axis X // Fixed value
 
 // Global Body Frame
 float accellGlobal[3];
@@ -126,18 +129,29 @@ float angularVelocityGlobal[3]; // Rate of changes of determined orientation
 float positionGlobal[3]={0.0f};
 
 // Control variables
-float orientationSetpoint[3]; //
-float stereRequest[2];
+float orientationSetpoint[3]; // Setpoints of orientation angles
+float servoAngleRequest[2]; // Requested angle of servos
+float motorPower_percent;
 bool initRequest,NavigInitDone=false; // Initialization
 
-bool RollControlerActive;
-bool PitchControlerActive;
-bool YawControlerActive;
+regulator_PID rollController; // regulator instance
+regulator_PID directionController; // regulator instance
 
+bool RollControllerActive;
+bool PitchControllerActive;
+bool YawControllerActive;
+// Recived from ESP8266:
 
+bool NewTask;
+Task TaskTarget; // What should be regulated
+
+float TaskTargetValue=0.0f; // Regulated Value
+float TaskTargetOffset=0.1; // accetable offset
+float DerivativeTargetOffset=0.1;
 // diagnostics variables
 HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus; // communication diagnostic
 TickType_t cycleStart,cycleDuration; // cycle duration diagnostic
+
 
 // debugging variables:
 bool taskExec;
@@ -241,8 +255,12 @@ int main(void)
   ControllerHandle = osThreadCreate(osThread(Controller), NULL);
 
   /* definition and creation of StateController */
-  osThreadDef(StateController, StartTask06, osPriorityNormal, 0, 128);
+  osThreadDef(StateController, StateControlFcn, osPriorityHigh, 0, 128);
   StateControllerHandle = osThreadCreate(osThread(StateController), NULL);
+
+  /* definition and creation of ExternalCommuni */
+  osThreadDef(ExternalCommuni, ExternalCommunicationFcn, osPriorityIdle, 0, 256);
+  ExternalCommuniHandle = osThreadCreate(osThread(ExternalCommuni), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -287,7 +305,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 70;
+  RCC_OscInitStruct.PLL.PLLN = 100;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -304,7 +322,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -365,9 +383,9 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 0;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Prescaler = 1;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+  htim1.Init.Period = 4999;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -392,9 +410,9 @@ static void MX_TIM1_Init(void)
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
@@ -439,11 +457,11 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0;
+  htim3.Init.Prescaler = 19;
   htim3.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
-  htim3.Init.Period = 65535;
+  htim3.Init.Period = 49999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
@@ -464,8 +482,8 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.Pulse = 3749;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW;
   sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
@@ -594,6 +612,7 @@ void StartDefaultTask(void const * argument)
 		  initRequest = true;
 	  }
 
+
 	  if (initRequest == true){
 	  	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
 	  	if (pressStartTime == 0) {
@@ -641,10 +660,9 @@ void readInputFcn(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-	  cycleStart = xTaskGetTickCount(); // start counting time of 1 cycle duration
-	  //osSemaphoreId inputsReaded_S_Handle;
-	  //osSemaphoreId inputsCaluclated_S_Handle;
+	cycleStart = xTaskGetTickCount(); // start counting time of 1 cycle duration
 	mpuCommStatus = mpu6050_update(&hi2c3,MPU6050_ADDRESS,accellRaw,gyroRaw); // read data from MPU
+
 	xSemaphoreGive(inputsReaded_S_Handle);
 	vTaskDelay(pdMS_TO_TICKS(TaskSamplingTime_ms));
   }
@@ -665,7 +683,7 @@ void processInputDataFcn(void const * argument)
   for(;;)
   {
 	  if(xSemaphoreTake(inputsReaded_S_Handle,portMAX_DELAY)==pdTRUE){
-	  //outputMapFcn = true;
+
 	  // Scale data and calculate angle based on acell
 	  accelCalc(accellRaw, accellLocal , orientationAccelLocal);
 	  gyroCalc(gyroRaw,gyroLocal);
@@ -675,14 +693,9 @@ void processInputDataFcn(void const * argument)
 	  yawEvaluate(orientationGlobal, gyroGlobal[2] ,NavigInitDone);
 	  kalmanFilter(orientationAccelLocal, gyroGlobal, orientationGlobal, accellLocal, gyroBias, NavigInitDone);
 
-	 //positionEvaluate(positionGlobal,accellGlobal,NavigInitDone);
-	 velocityLocal(&velocityXLocal,accellLocal,orientationGlobal,NavigInitDone);
-
 	 // if initialization procces active -> finish
 	  if (NavigInitDone == true)NavigInitDone=false;
-	  //outputMapFcn = false;
 	  xSemaphoreGive(inputsCalculated_S_Handle);
-	  //vTaskDelay(pdMS_TO_TICKS(TaskSamplingTime_ms));
 	  }
   }
   /* USER CODE END processInputDataFcn */
@@ -698,22 +711,17 @@ void processInputDataFcn(void const * argument)
 void MapOutputFunction(void const * argument)
 {
   /* USER CODE BEGIN MapOutputFunction */
-
-	// Start Servo PWM
-	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
-
+	servoInit(&htim3);
+	motorInit(&htim1);
   /* Infinite loop */
   for(;;)
   {
 	 if(xSemaphoreTake(controlDone_S_Handle,portMAX_DELAY)==pdTRUE){
-		 char buff[50];
-		 printf("RawData, %d, %d, %d, %d, %d, %d\n" ,accellRaw[0],accellRaw[1],accellRaw[2],gyroRaw[0],gyroRaw[1],gyroRaw[2]);
-		 sprintf(buff,"Orientation, %.2f, %.2f, %.2f\n",orientationGlobal[0],orientationGlobal[1],orientationGlobal[2]);
-		 printf(buff);
 
+		servoSet(servoAngleRequest,&htim3);
+		motorSet(motorPower_percent,&htim1);
+		cycleDuration = (xTaskGetTickCount()- cycleStart); // calculate duration time [ms]
 
-		 cycleDuration = (xTaskGetTickCount()- cycleStart); // calculate in ms
 	 }
   }
   /* USER CODE END MapOutputFunction */
@@ -729,55 +737,39 @@ void MapOutputFunction(void const * argument)
 void ControllerFcn(void const * argument)
 {
   /* USER CODE BEGIN ControllerFcn */
-
-	float torqueDemand;
 	float orientationGlobalPrev[3]={0.0f};
 
-	// Set parameters for regulator
-	torque2angleStruct torque2angleV0_6;
-		torque2angleV0_6.coe[0]=-45.488561;
-		torque2angleV0_6.coe[1]=148.794907;
-		torque2angleV0_6.coe[2]=75.992147;
-		torque2angleV0_6.coe[3]=-196.131888;
-		torque2angleV0_6.coe[4]=-45.962337;
-		torque2angleV0_6.coe[5]=100.708216;
-		torque2angleV0_6.coe[6]=12.085230;
-		torque2angleV0_6.coe[7]=-23.741009;
-		torque2angleV0_6.coe[8]=-1.283942;
-		torque2angleV0_6.coe[9]=14.986159;
-		torque2angleV0_6.coe[10]=0;
-		torque2angleV0_6.velocity=0.6;
-		torque2angleV0_6.maxLiftCoe=0.7816;
-		torque2angleV0_6.maxStableAngle=11;
-
-	regulator_PID rollController;
+	// Set initial parameters for regulator
 		rollController.Kp=1.368792;
 		rollController.Ki=0.802290;
 		rollController.Kd=0.448888;
 		rollController.Nd=13.235897;
-
-
-
-
+		rollController.outMax = 30;
+		rollController.outMin = 30;
+		directionController.Kp=1.368792;
+		directionController.Ki=0.802290;
+		directionController.Kd=0.448888;
+		directionController.Nd=13.235897;
+		directionController.outMax = 30;
+		directionController.outMin = 30;
 
   /* Infinite loop */
   for(;;)
   {
 	  if(xSemaphoreTake(inputsCalculated_S_Handle,portMAX_DELAY)==pdTRUE){
 
-		  if ( RollControlerActive == true ){
-			  rollController.outMax=maxTorqueAvailable(&torque2angleV0_6, d1_stere ,velocityXLocal);
-			  rollController.outMin=-rollController.outMax;
-			  torqueDemand=PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
-			  stereRequest[0]=torque2angle(torqueDemand,&torque2angleV0_6,d1_stere,velocityXLocal); // right stere angle
-			  stereRequest[1]=-stereRequest[0]; // left stere angle
+		  if ( RollControllerActive == true ){
+			  servoAngleRequest[0]=PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
+			  servoAngleRequest[1]=-servoAngleRequest[0];
 		  }
-		  else if (YawControlerActive == true ){
-			  rollController.outMax=maxTorqueAvailable(&torque2angleV0_6, d1_stere ,velocityXLocal);
-			  rollController.outMin=-rollController.outMax;
-			  torqueDemand=PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
-			  stereRequest[0]=torque2angle(torqueDemand,&torque2angleV0_6,d1_stere,velocityXLocal); // right stere angle
-			  stereRequest[1]= stereRequest[0]; // left stere angle
+		  else if ( PitchControllerActive == true){
+
+			  servoAngleRequest[0]=PIDcontroller(&directionController,orientationGlobal[1],orientationSetpoint[1],NavigInitDone);
+			  servoAngleRequest[1]=servoAngleRequest[0];
+		  }
+		  else if ( YawControllerActive == true){
+			  servoAngleRequest[0]=PIDcontroller(&directionController,orientationGlobal[2],orientationSetpoint[2],NavigInitDone);
+			  servoAngleRequest[1]=servoAngleRequest[0];
 		  }
 
 		  // Calculate Rate of changes of orientation
@@ -785,37 +777,163 @@ void ControllerFcn(void const * argument)
 			  angularVelocityGlobal[i]= (orientationGlobal[i]-orientationGlobalPrev[i])/Ts;
 			  orientationGlobalPrev[i]= orientationGlobal[i];
 		  }
-
-
 		 xSemaphoreGive(controlDone_S_Handle);
-
-
 	  }
   }
   /* USER CODE END ControllerFcn */
 }
 
-/* USER CODE BEGIN Header_StartTask06 */
+/* USER CODE BEGIN Header_StateControlFcn */
 /**
 * @brief Function implementing the StateController thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask06 */
-void StartTask06(void const * argument)
+/* USER CODE END Header_StateControlFcn */
+void StateControlFcn(void const * argument)
 {
-  /* USER CODE BEGIN StartTask06 */
-	//int state=0;
-	orientationSetpoint[0]=90;
+  /* USER CODE BEGIN StateControlFcn */
+	typedef enum { // What should be regulated
+	    seting_propper_roll = 0,
+	    changing_regulated_angle = 1,
+	    returning_to_default_pos = 2,
+		regulatation_done = 3,
+	}State;
 
+	State stateCounter=seting_propper_roll;
   /* Infinite loop */
   for(;;)
   {
+// isSet(float input, float derivative , float setpoint , float input_offset , float derivative_offset )
+	  if (NewTask){
+		  stateCounter = 0;
+	  }
+
+	  switch (TaskTarget){
+	  case Roll:
+		  RollControllerActive=true;
+		  PitchControllerActive=false;
+		  YawControllerActive=false;
+		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+			  stateCounter = regulatation_done;
+		  }
+		  break;
+
+	  case Yaw:
+		  switch (stateCounter){
+		  	  case seting_propper_roll:
+		  		  RollControllerActive=true;
+		  		  PitchControllerActive=false;
+		  		  YawControllerActive=false;
+		  		  orientationSetpoint[0]=90.0;
+		  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+			  				  stateCounter = changing_regulated_angle;
+		  		  }
+			  	  break;
+		  	  case changing_regulated_angle:
+		  		  RollControllerActive=false;
+		  		  YawControllerActive=true;
+		  		  orientationSetpoint[2]=TaskTargetValue;
+		  		  if (isSet(orientationGlobal[2],angularVelocityGlobal[2],orientationSetpoint[2],TaskTargetOffset,DerivativeTargetOffset)){
+		  			  stateCounter = returning_to_default_pos;
+		  		  }
+		  		  break;
+		  	  case returning_to_default_pos:
+		  		  RollControllerActive=true;
+		  		  YawControllerActive=false;
+		  		  orientationSetpoint[0]=0.0f;
+		  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+		  			  stateCounter = regulatation_done;
+		  		  }
+		  		  break;
+		  	case regulatation_done:
+
+		    break;
+		  }
+
+		  break;
+	  case Pitch:
+		  switch (stateCounter){
+		  		  case seting_propper_roll:
+		  			  RollControllerActive=true;
+		  			  PitchControllerActive=false;
+		  			  YawControllerActive=false;
+		  			  orientationSetpoint[0]=0.0;
+		  			  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+		  			  	  stateCounter = changing_regulated_angle;
+		  			  }
+		  			  break;
+		  		  case changing_regulated_angle:
+		  			  RollControllerActive=false;
+		  			  PitchControllerActive=true;
+		  			  orientationSetpoint[2]=TaskTargetValue;
+		  			  if (isSet(orientationGlobal[2],angularVelocityGlobal[2],orientationSetpoint[2],TaskTargetOffset,DerivativeTargetOffset)){
+		  				  stateCounter = returning_to_default_pos;
+		  			  }
+		  			  break;
+		  		  case returning_to_default_pos:
+		  		  	 RollControllerActive=true;
+		  		  	 PitchControllerActive=false;
+		  		  	 orientationSetpoint[0]=0.0f;
+		  		  	 if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+		  		  		stateCounter = regulatation_done;
+		  		  	}
+		  		  	break;
+		  		  case regulatation_done:
+
+		  		  break;
+		  		  }
+		  break;
+
+	  }
 
 
-    vTaskDelay(200);
+
+
+	  vTaskDelay(StateControllerSamplingTime_ms);
   }
-  /* USER CODE END StartTask06 */
+  /* USER CODE END StateControlFcn */
+}
+
+/* USER CODE BEGIN Header_ExternalCommunicationFcn */
+/**
+* @brief Function implementing the ExternalCommuni thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ExternalCommunicationFcn */
+void ExternalCommunicationFcn(void const * argument)
+{
+  /* USER CODE BEGIN ExternalCommunicationFcn */
+  /* Infinite loop */
+	/*
+	// TO DO:
+	1) communication Init, control
+	2) To get:
+	TaskTarget,TaskTargetValue, TaskTargetOffset
+	Regulator Parameters
+	Init
+	Power Motor
+
+	3) to calculate and set
+	NewTask
+	Regulator Parameters
+
+	4) to send
+	Orientation
+	Status
+	Setpoints
+
+	2) Get command: orientation setpoint, motor power,
+	3) Get data: Max, min angle; regulator parameters
+	4) Variable: New Task
+	5) send: orientation, velocity no!
+	*/
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END ExternalCommunicationFcn */
 }
 
 /**
