@@ -55,6 +55,7 @@ I2C_HandleTypeDef hi2c3;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_tx;
 
@@ -81,6 +82,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C3_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_USART1_UART_Init(void);
 void StartDefaultTask(void const * argument);
 void readInputFcn(void const * argument);
 void processInputDataFcn(void const * argument);
@@ -152,7 +154,7 @@ float DerivativeTargetOffset=0.1;
 HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus; // communication diagnostic
 TickType_t cycleStart,cycleDuration; // cycle duration diagnostic
 
-
+uint8_t buffESP[]="6969";
 // debugging variables:
 bool taskExec;
 float test[3];
@@ -193,6 +195,7 @@ int main(void)
   MX_I2C3_Init();
   MX_TIM1_Init();
   MX_TIM3_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   mpuInitStatus = mpu6050_init(&hi2c3,MPU6050_ADDRESS);
@@ -259,7 +262,7 @@ int main(void)
   StateControllerHandle = osThreadCreate(osThread(StateController), NULL);
 
   /* definition and creation of ExternalCommuni */
-  osThreadDef(ExternalCommuni, ExternalCommunicationFcn, osPriorityIdle, 0, 256);
+  osThreadDef(ExternalCommuni, ExternalCommunicationFcn, osPriorityAboveNormal, 0, 256);
   ExternalCommuniHandle = osThreadCreate(osThread(ExternalCommuni), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -497,6 +500,39 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 2 */
   HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
 
 }
 
@@ -931,7 +967,11 @@ void ExternalCommunicationFcn(void const * argument)
 	*/
   for(;;)
   {
-    osDelay(1);
+
+
+
+	uartStatus=HAL_UART_Transmit(&huart1, buffESP, strlen((char*)buffESP), 500);
+    vTaskDelay(250);
   }
   /* USER CODE END ExternalCommunicationFcn */
 }
