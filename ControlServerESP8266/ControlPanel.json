@@ -1,0 +1,310 @@
+       <!DOCTYPE html> 
+        <html lang="pl">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+          <title>AUV Control Panel</title> 
+          <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script> 
+
+        <style>
+          h1 { 
+            /* Header 1 - title */
+            font-size: 36px; 
+            color: white; 
+            text-align: center; 
+            margin-top: 20px; 
+            background-color: darkblue;
+            }
+
+          h2 { 
+            /* Header 2 */
+            font-size: 18px; 
+            color: black;  
+            margin-top: 10%; 
+            }
+
+          h3 {
+            /* Header 3 - data box  */
+            font-size: 15px;
+            color: black; 
+            margin-right: 10%; 
+            border: 2px solid black; 
+            padding: 3%;              
+            border-radius: 5px;        
+            width: fit-content;        
+            background-color: #F5F5F5; 
+          }
+                  
+          table {
+            width: 50%; /* Width of table */
+            //border-collapse: collapse; /* Delete distances in table (?) */
+            margin: 5%; /* Space before and after table */
+            font-family: Arial, sans-serif; /* Font */
+            border-radius: 5px;
+            }
+
+            /* Style for table headers */
+            th {
+              background-color: darkblue; /* Navy background */
+              border: 2px solid black; /* Gray borders */
+              color: white; /* White font */
+              padding: 10px; /* Inner space */
+              text-align: center; /* Center text */
+            }
+
+            /* Style for table cells */
+            td {
+              background-color: lightgrey; /* Light Grey background */
+              border: 1px solid black; /* Black borders */
+              padding: 8px; /* Inner space */
+              text-align: center; /* Center text */
+            }
+
+            /* Style for return button */
+            .auv-button { // its good to change this name
+              margin: 15%;
+            }
+
+          /* positioning in two columns */
+          .container {
+            display: flex; /* flexbox */
+            justify-content: space-between;
+            margin: 20px; 
+          }
+
+          .column {
+            width: 30%; 
+            padding: 10px; 
+            border: 3px solid black; 
+            border-radius: 8px; 
+          }
+
+          .OffOnButton {
+            height: 120px;
+            width: 160px;
+          }
+
+          .ButtonOn{
+            background-color: red; 
+            color: white;
+          }
+
+          .ButtonOff{
+            background-color: green; 
+            color: black;
+          }
+
+          .button-container {
+          justify-content: center;
+          display: flex; 
+          gap: 20px;     
+          }
+
+          </style>
+          </head>
+
+          <body>
+            <h1> <b> AUV Control Panel </b> </h1>
+            <br><br> 
+            <div class="button-container">
+            <button onclick="location.href='/'"> <b>AUV OFF</b> </button>
+            <button id="updateTableOnButton"> <b> Log Data </b></button>
+            <button id="motorOnButton"><b> Motor ON/OFF </b></button>
+            </div>
+            <div class="container">
+              <div class="column" > 
+                <div class="form-container">
+                <h2> Command Panel: </h2>
+                  <form id="dataForm">
+                    <label for="selectAction">    Controlled parametr: </label>
+                    <select id="selectAction" name="selectAction">
+                      <option value="Roll"> Roll </option>
+                      <option value="Pitch"> Pitch </option>
+                      <option value="Yaw"> Yaw </option>
+                      <option value="ForFutureDevelop"> ForFutureDevelop </option>
+                    </select>
+                  <br><br>
+                  <label for="dataInput">Setpoint [deg]: </label>
+                  <input type="text" id="dataInputSetpoint" name="dataInput" placeholder=" ... " required>
+                  <input type="submit" value="Set">
+                  <br><br>
+                  <label for="dataInput">Motor Power [%]: </label>
+                  <input type="text" id="dataInputMotorPower" name="dataInput" placeholder=" ... " required>
+                  <input type="submit" value="Set">
+
+                </form>
+              </div>
+              </div>
+              <div class="column" > 
+                <h3>
+                  <p id="rollSetpoint">Roll setpoint [deg]: 0</p>
+                  <p id="pitchSetpoint">Pitch setpoint [deg]:  0</p>
+                  <p id="yawSetpoint">Yaw setpoint [deg]:  0</p>
+                  <br><br>
+                </h3>
+              </div>
+              <div class="column" > 
+                <h3>
+                  <p id="rollActual">Roll value [deg]: 0</p>
+                  <p id="pitchActual">Pitch value [deg]:  0</p>
+                  <p id="yawActual">yaw value [deg]:  0</p>
+                  <br>
+                  <p id="motorActual">Motor Power [%]:  0</p>
+                  <p id="stateMsg"> State:  0</p>
+                </h3>
+              </div>
+            </div>
+            
+            <p id="Table"></p>  
+            <table id="MeasurementTable">
+                <thead>
+                    <tr>
+                        <th> Time [s] </th>
+                        <th> Roll [deg] </th>
+                        <th> Pitch  [deg]  </th>
+                        <th> Yaw [deg] </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Place for rows -->
+                </tbody>
+            </table>
+
+            <script>
+            //  Global Var: 
+                var AUV_ON=0;
+                var timeSample, rollSample, pitchSample , yawSample , motorPower, statusMsg; // data to send to Panel
+                var rowAmount=0;
+                var rowMaxAmount=60;
+                var updateTableOn=0;
+                var sendDataPrepared =0; // prepared data to send to server
+
+                document.getElementById("motorOnButton").addEventListener("click", function() {
+                  AUV_ON = !AUV_ON;
+
+                  if (AUV_ON) {
+                    document.getElementById("motorOnButton").innerText = "Stop Motor";
+                    document.getElementById("motorOnButton").classList.remove("ButtonOff");
+                    document.getElementById("motorOnButton").classList.add("ButtonOn");
+                  } else {
+                    document.getElementById("motorOnButton").innerText = "Start Motor";
+                    document.getElementById("motorOnButton").classList.remove("ButtonOn");
+                    document.getElementById("motorOnButton").classList.add("ButtonOff");
+                  }
+
+
+
+                  $.ajax({
+                    url: 'http://192.168.100.61/on', 
+                    type: "POST",
+                    data: { 
+                    dataInput: 0  // Send data
+                  },
+                  success: function(response) {
+                    console.log("Data sent correctly: ", response);
+                  },
+                  error: function(error) {
+                    console.log("Error while sending data: ", error);
+                  }
+                });
+
+                });
+                
+                document.getElementById("updateTableOnButton").addEventListener("click", function() {
+                updateTableOn = !updateTableOn;
+                if (updateTableOn) {
+                    document.getElementById("updateTableOnButton").innerText = "Data Logger ON";
+                    document.getElementById("updateTableOnButton").classList.remove("ButtonOff");
+                    document.getElementById("updateTableOnButton").classList.add("ButtonOn");
+                  } else {
+                    document.getElementById("updateTableOnButton").innerText = "Data Logger OFF";
+                    document.getElementById("updateTableOnButton").classList.remove("ButtonOn");
+                    document.getElementById("updateTableOnButton").classList.add("ButtonOff");
+                  }
+                timeSample = 0;
+                });
+
+                function updateNumber() {
+                    $.ajax({
+                        url: '/Data', // Server demand
+                        type: 'GET',
+                        success: function(data) {
+                            //$('#Table').text(data); // Actualisation
+                            $('#Table').text(JSON.stringify(data, null, 2));
+                            timeSample = data.timeSample; // Set to global var
+                            rollSample = data.rollSample;
+                            pitchSample = data.pitchSample;
+                            yawSample = data.yawSample;
+                            motorPower = data.motorPower;
+                            statusMsg = data.statusMsg;
+                            addRow(); // Add another row
+                            displayActual();
+                        }
+                    });
+                }
+
+                function addRow() {
+                  // Formatting of new row 
+                    var col1 = timeSample;
+                    var col2 = rollSample;
+                    var col3 = pitchSample;
+                    var col4 = yawSample;
+                    
+                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td></tr>";
+                  // Adding new row
+                  if (updateTableOn == 1){
+                    $('#MeasurementTable tbody').append(newRow);
+                    rowAmount++;
+                    console.log(rowAmount);
+                    if (rowAmount>=rowMaxAmount){
+                    $('#MeasurementTable tbody tr:first').remove();
+                    rowAmount--;
+                    }
+                    }
+                }
+                function displayActual(){
+                                    
+                    document.getElementById("rollActual").innerText = "Roll Value [deg]: " + rollSample;
+                    document.getElementById("pitchActual").innerText = "Pitch Value [deg]: " + pitchSample;
+                    document.getElementById("yawActual").innerText = "Yaw Value [deg]: " + yawSample;
+                    document.getElementById("motorActual").innerText = "Motor Power [%]:" + motorPower;
+                    document.getElementById("stateMsg").innerText = "State: " + statusMsg;
+                }
+
+                setInterval(updateNumber, 1000); // Call function every 1000 ms
+
+                // Command send form 
+              $('#dataForm').on('submit', function(event) {
+                event.preventDefault(); // Blocking defoault work 
+
+                var inputCommandSetpoint = $('#dataInputSetpoint').val(); // Get value from input form -> Setpoint
+                var inputCommandMotorPower = $('#dataInputMotorPower').val(); // Get value from input form -> Motor Power
+                var selectAction = $('#selectAction').val(); // Pobranie wartości z listy rozwijanej
+
+                // Sending data
+                if (AUV_ON == 0){
+                  sendDataPrepared = 0;
+                }
+                else{
+                  sendDataPrepared = selectAction + " " + inputCommandSetpoint + " " + inputCommandMotorPower;
+                }
+                $.ajax({
+                  url: 'http://192.168.100.61/on', 
+                  type: "POST",
+                  data: { 
+                    dataInput: sendDataPrepared  // Send data
+                  },
+                  success: function(response) {
+                    console.log("Data sent correctly: ", response);
+
+                  },
+                  error: function(error) {
+                    console.log("Error while sending data: ", error);
+                  }
+                });
+              });
+
+
+            </script>
+        </body>
+        </html>
