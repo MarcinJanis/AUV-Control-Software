@@ -1,6 +1,8 @@
 #include <Wire.h>   // I2C library - not used
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <SPI.h> // SPI - not used
+#include <SoftwareSerial.h>
 
 const char* ssid = "Artus"; // WiFi name
 const char* pass = "ZLKNshiq"; // WiFi password -> change for asking about passwrd and name 
@@ -9,23 +11,40 @@ WiFiClient client; //creating object WiFi for establish connection
 ESP8266WebServer server(80); // creating Web server object
 
 #define PIN_LED 13 // test diode 
+#define timeDataSend_ms 500
 
+
+
+SoftwareSerial mySerial(D5, D6);
  // global variables init
-  float RollAngleRegister[] = {0,10,30,-27,15,-48,16,45};
-  float TimeBaseRegister[] = {0,1,2,3,4,5,6,7};
-  bool chartUpdate = false;
+    float orientationSample[3]={0,0,0};
+    float timeBaseSample = 0;
+    float motorPowerActual=0;
+    float motorPowerDemand=0;
+    String statusMsg;
+
+    bool chartUpdate = false;
+
+    int i=0;
+    int fromSTM = 2137;
+    int fromSTMsize = 0 ;
+
 
 
 void setup()
 {
   pinMode(PIN_LED, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
 
   Serial.begin(115200); // Serial monitor init
+  mySerial.begin(115200);
+  mySerial.setTimeout(100);  // Ustaw timeout na 100 ms
 
   WiFi.begin(ssid, pass); // Connect to WiFi 
   Serial.print("Connecting ... "); 
-
-  while(WiFi.status() != WL_CONNECTED) // Connecting animation
+// __________ Connecting to WiFi _______________
+// Connecting animation
+  while(WiFi.status() != WL_CONNECTED) 
   {
     Serial.print("."); 
     delay(400);
@@ -39,14 +58,11 @@ void setup()
   Serial.print("IP: ");
   Serial.println(WiFi.localIP()); // Display IP adress
 
-
   // Functions that handle server:
   server.on("/", handleRoot); // Root page
   server.on("/on", handleOn); // Monitoring page
   server.on("/Data", handleData); // sending measurements
   server.begin();
-
-
 
   // do usuniecia:
   // Inicjalizacja generatora liczb losowych
@@ -64,17 +80,18 @@ void handleRoot()
     html += "</body></html>";
     server.send(200, "text/html", html);
 }
-
+//random(200, 300)
 void handleData() {
   // Sending data from server in json format ( string=" {\"name1\": 123, \"name2\": 456} )
-    String jsonResponse = "{";
-    jsonResponse += "\"timeSample\":" + String(random(0, 100)) + ",";
-    jsonResponse += "\"rollSample\":" + String(random(100, 200)) + ",";
-    jsonResponse += "\"yawSample\":" + String(random(200, 300)) + ",";
-    jsonResponse += "\"depthSample\":" + String(random(200, 300)) + ",";
-    jsonResponse += "\"veloSample\":" + String(random(0, 1)); // Dodany przecinek
-    jsonResponse += "}";
-    server.send(200, "application/json", jsonResponse);
+ String jsonResponse = "{";
+  jsonResponse += "\"timeSample\":" + String(timeBaseSample, 2) + ",";  // 2 miejsca po przecinku
+  jsonResponse += "\"rollSample\":" + String(orientationSample[0], 2) + ",";
+  jsonResponse += "\"pitchSample\":" + String(orientationSample[1], 2) + ",";
+  jsonResponse += "\"yawSample\":" + String(orientationSample[2], 2) + ",";
+  jsonResponse += "\"motorPower\":" + String(motorPowerActual, 2) + ",";
+  jsonResponse += "\"statusMsg\":\"" + statusMsg + "\"";  // statusMsg jako string w JSON
+  jsonResponse += "}";
+    server.send(200, "application/json", jsonResponse); // Send to panel
 }
 
 // ...
@@ -93,6 +110,7 @@ void handleOn() {
 
         <style>
           h1 { 
+            /* Header 1 - title */
             font-size: 36px; 
             color: white; 
             text-align: center; 
@@ -101,12 +119,14 @@ void handleOn() {
             }
 
           h2 { 
+            /* Header 2 */
             font-size: 18px; 
             color: black;  
             margin-top: 10%; 
             }
 
           h3 {
+            /* Header 3 - data box  */
             font-size: 15px;
             color: black; 
             margin-right: 10%; 
@@ -119,7 +139,7 @@ void handleOn() {
                   
           table {
             width: 50%; /* Width of table */
-            //border-collapse: collapse; /* Delete przerwy (?) */
+            //border-collapse: collapse; /* Delete distances in table (?) */
             margin: 5%; /* Space before and after table */
             font-family: Arial, sans-serif; /* Font */
             border-radius: 5px;
@@ -155,31 +175,27 @@ void handleOn() {
           }
 
           .column {
-            width: 45%; 
+            width: 30%; 
             padding: 10px; 
             border: 3px solid black; 
             border-radius: 8px; 
           }
 
-          .updateTableOnButton {
-            height: 100px;
+          .OffOnButton {
+            height: 120px;
             width: 160px;
           }
 
-          .motorOnButton {
-            height: 100px;
-            width: 160px;
-          }
-
-          .motorButtonOn{
+          .ButtonOn{
             background-color: red; 
             color: white;
           }
 
-          .motorButtonOff{
+          .ButtonOff{
             background-color: green; 
             color: black;
           }
+
           .button-container {
           justify-content: center;
           display: flex; 
@@ -194,50 +210,63 @@ void handleOn() {
             <br><br> 
             <div class="button-container">
             <button onclick="location.href='/'"> <b>AUV OFF</b> </button>
-            <button id="updateTableOnButton"> <b> Stop/Start Recording  </b></button>
+            <button id="updateTableOnButton"> <b> Log Data </b></button>
             <button id="motorOnButton"><b> Motor ON/OFF </b></button>
             </div>
-            <div class="container" >
-            <div class="column" > 
-            <div class="form-container">
-            <h2> Command Panel: </h2>
-              <form id="dataForm">
-                  
-                  <label for="selectAction">    Choose action: </label>
-                  <select id="selectAction" name="selectAction">
-                  <option value="Roll"> Roll </option>
-                  <option value="Pitch"> Pitch </option>
-                  <option value="Yaw"> Yaw </option>
-                  <option value="Depth"> Depth </option>
-                  </select>
+            <div class="container">
+              <div class="column" > 
+                <div class="form-container">
+                <h2> Command Panel: </h2>
+                  <form id="dataForm">
+                    <label for="selectAction">    Controlled parametr: </label>
+                    <select id="selectAction" name="selectAction">
+                      <option value="Roll"> Roll </option>
+                      <option value="Pitch"> Pitch </option>
+                      <option value="Yaw"> Yaw </option>
+                      <option value="ForFutureDevelop"> ForFutureDevelop </option>
+                    </select>
+                  <br><br>
+                  <label for="dataInput">Setpoint [deg]: </label>
+                  <input type="text" id="dataInputSetpoint" name="dataInput" placeholder=" ... " required>
+                  <input type="submit" value="Set">
+                  <br><br>
+                  <label for="dataInput">Motor Power [%]: </label>
+                  <input type="text" id="dataInputMotorPower" name="dataInput" placeholder=" ... " required>
+                  <input type="submit" value="Set">
 
-                <label for="dataInput">   Insert value: </label>
-                <input type="text" id="dataInput" name="dataInput" placeholder=" ... " required>
-
-                <input type="submit" value="Set">
-              </form>
+                </form>
+              </div>
+              </div>
+              <div class="column" > 
+                <h3>
+                  <p id="rollSetpoint">Roll setpoint [deg]: 0</p>
+                  <p id="pitchSetpoint">Pitch setpoint [deg]:  0</p>
+                  <p id="yawSetpoint">Yaw setpoint [deg]:  0</p>
+                  <br><br>
+                </h3>
+              </div>
+              <div class="column" > 
+                <h3>
+                  <p id="rollActual">Roll value [deg]: 0</p>
+                  <p id="pitchActual">Pitch value [deg]:  0</p>
+                  <p id="yawActual">yaw value [deg]:  0</p>
+                  <br>
+                  <p id="motorActual">Motor Power [%]:  0</p>
+                  <p id="stateMsg"> State:  0</p>
+                </h3>
+              </div>
             </div>
-            </div>
-            <div class="column" > 
-            <h3>
-              <p id="rollSetpoint">Roll setpoint [deg]: 0</p>
-              <p id="yawSetpoint">Yaw setpoint [deg]:  0</p>
-              <p id="depthSetpoint">Depth setpoint [m]:  0</p>
-            </h3>
-            </div>
-            </div>
+            
             <p id="Table"></p>  
             <table id="MeasurementTable">
                 <thead>
                     <tr>
                         <th> Time [s] </th>
                         <th> Roll [deg] </th>
-                        <th> Yaw  [deg]  </th>
-                        <th> Depth [m] </th>
-                        <th> Velocity [m/s] </th>
+                        <th> Pitch  [deg]  </th>
+                        <th> Yaw [deg] </th>
                     </tr>
                 </thead>
-
                 <tbody>
                     <!-- Place for rows -->
                 </tbody>
@@ -246,7 +275,7 @@ void handleOn() {
             <script>
             //  Global Var: 
                 var AUV_ON=0;
-                var timeSample, rollSample, yawSample, depthSample , veloSample; // data to send
+                var timeSample, rollSample, pitchSample , yawSample , motorPower, statusMsg; // data to send to Panel
                 var rowAmount=0;
                 var rowMaxAmount=60;
                 var updateTableOn=0;
@@ -257,12 +286,12 @@ void handleOn() {
 
                   if (AUV_ON) {
                     document.getElementById("motorOnButton").innerText = "Stop Motor";
-                    document.getElementById("motorOnButton").classList.remove("motorButtonOff");
-                    document.getElementById("motorOnButton").classList.add("motorButtonOn");
+                    document.getElementById("motorOnButton").classList.remove("ButtonOff");
+                    document.getElementById("motorOnButton").classList.add("ButtonOn");
                   } else {
                     document.getElementById("motorOnButton").innerText = "Start Motor";
-                    document.getElementById("motorOnButton").classList.remove("motorButtonOn");
-                    document.getElementById("motorOnButton").classList.add("motorButtonOff");
+                    document.getElementById("motorOnButton").classList.remove("ButtonOn");
+                    document.getElementById("motorOnButton").classList.add("ButtonOff");
                   }
 
 
@@ -275,10 +304,6 @@ void handleOn() {
                   },
                   success: function(response) {
                     console.log("Data sent correctly: ", response);
-                    /* display setpoints */
-                    document.getElementById("rollSetpoint").innerText ="Roll setpoint [deg]: 0";
-                    document.getElementById("yawSetpoint").innerText ="Yaw setpoint [deg]:  0"; 
-                    document.getElementById("depthSetpoint").innerText ="Depth setpoint [m]:  0"; 
                   },
                   error: function(error) {
                     console.log("Error while sending data: ", error);
@@ -289,6 +314,15 @@ void handleOn() {
                 
                 document.getElementById("updateTableOnButton").addEventListener("click", function() {
                 updateTableOn = !updateTableOn;
+                if (updateTableOn) {
+                    document.getElementById("updateTableOnButton").innerText = "Data Logger ON";
+                    document.getElementById("updateTableOnButton").classList.remove("ButtonOff");
+                    document.getElementById("updateTableOnButton").classList.add("ButtonOn");
+                  } else {
+                    document.getElementById("updateTableOnButton").innerText = "Data Logger OFF";
+                    document.getElementById("updateTableOnButton").classList.remove("ButtonOn");
+                    document.getElementById("updateTableOnButton").classList.add("ButtonOff");
+                  }
                 timeSample = 0;
                 });
 
@@ -297,13 +331,16 @@ void handleOn() {
                         url: '/Data', // Server demand
                         type: 'GET',
                         success: function(data) {
-                            $('#Table').text(data); // Actualisation
+                            //$('#Table').text(data); // Actualisation
+                            $('#Table').text(JSON.stringify(data, null, 2));
                             timeSample = data.timeSample; // Set to global var
                             rollSample = data.rollSample;
+                            pitchSample = data.pitchSample;
                             yawSample = data.yawSample;
-                            depthSample = data.depthSample;
-                            veloSample = data.veloSample;
+                            motorPower = data.motorPower;
+                            statusMsg = data.statusMsg;
                             addRow(); // Add another row
+                            displayActual();
                         }
                     });
                 }
@@ -312,10 +349,10 @@ void handleOn() {
                   // Formatting of new row 
                     var col1 = timeSample;
                     var col2 = rollSample;
-                    var col3 = yawSample;
-                    var col4 = depthSample;
-                    var col5 = veloSample;
-                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td><td>" + col5 + "</td></tr>";
+                    var col3 = pitchSample;
+                    var col4 = yawSample;
+                    
+                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td></tr>";
                   // Adding new row
                   if (updateTableOn == 1){
                     $('#MeasurementTable tbody').append(newRow);
@@ -327,14 +364,23 @@ void handleOn() {
                     }
                     }
                 }
-                setInterval(updateNumber, 1000); // Call function every 1000 ms
+                function displayActual(){
+                                    
+                    document.getElementById("rollActual").innerText = "Roll Value [deg]: " + rollSample;
+                    document.getElementById("pitchActual").innerText = "Pitch Value [deg]: " + pitchSample;
+                    document.getElementById("yawActual").innerText = "Yaw Value [deg]: " + yawSample;
+                    document.getElementById("motorActual").innerText = "Motor Power [%]:" + motorPower;
+                    document.getElementById("stateMsg").innerText = "State: " + statusMsg;
+                }
 
+                setInterval(updateNumber, 1000); // Call function every 1000 ms
 
                 // Command send form 
               $('#dataForm').on('submit', function(event) {
                 event.preventDefault(); // Blocking defoault work 
 
-                var inputCommand = $('#dataInput').val(); // Get value from input form
+                var inputCommandSetpoint = $('#dataInputSetpoint').val(); // Get value from input form -> Setpoint
+                var inputCommandMotorPower = $('#dataInputMotorPower').val(); // Get value from input form -> Motor Power
                 var selectAction = $('#selectAction').val(); // Pobranie wartości z listy rozwijanej
 
                 // Sending data
@@ -342,7 +388,7 @@ void handleOn() {
                   sendDataPrepared = 0;
                 }
                 else{
-                  sendDataPrepared = selectAction + " " + inputCommand;
+                  sendDataPrepared = selectAction + " " + inputCommandSetpoint + " " + inputCommandMotorPower;
                 }
                 $.ajax({
                   url: 'http://192.168.100.61/on', 
@@ -352,19 +398,6 @@ void handleOn() {
                   },
                   success: function(response) {
                     console.log("Data sent correctly: ", response);
-                    /* display setpoints */
-                    if (selectAction == "Roll" ){ 
-                    document.getElementById("rollSetpoint").innerText = "Roll setpoint [deg]:" + inputCommand;
-                    document.getElementById("yawSetpoint").innerText = "Yaw setpoint [deg]: " + "0"; 
-                    } 
-                    if (selectAction == "Yaw" ){ 
-                    document.getElementById("rollSetpoint").innerText = "Roll setpoint [deg]:" + "90" ; 
-                    document.getElementById("yawSetpoint").innerText = "Yaw setpoint [deg]: " + inputCommand; 
-                    } 
-                    if (selectAction == "Depth" ){ 
-                    document.getElementById("depthSetpoint").innerText = "Depth setpoint [m]: " + inputCommand; 
-                    document.getElementById("rollSetpoint").innerText = "Roll setpoint [deg]:" + "0"; 
-                    } 
 
                   },
                   error: function(error) {
@@ -388,8 +421,38 @@ void handleOn() {
 }
 
 
-
 void loop()
 {
+
+
   server.handleClient(); // funkcja odpowiadające za obsługę serwera
+  delay(50); 
+// communication:
+
+timeBaseSample = random(200, 300);
+orientationSample[0] = 2.4f + random(200, 300) / 100.0f;
+orientationSample[1] = 3.9f + random(200, 300) / 100.0f;
+orientationSample[2] = 0.9f + random(200, 300) / 100.0f;
+motorPowerActual = random(200, 300) / 100.0f;
+statusMsg= "Dobrze jestt!";
+
+/*
+  fromSTMsize = mySerial.available();
+  if (mySerial.available()) {
+    digitalWrite(LED_BUILTIN, LOW);  // Zaświeć LED                    // Czekaj 1 sekundę            // Czekaj 1 sekundę
+    String buffer = mySerial.readString();
+    fromSTM = buffer.toInt();
+    digitalWrite(LED_BUILTIN, HIGH); // Zgaś LED 
+    //Serial.println("Data recived: " + fromSTM);
+
+*/
+/*
+// Sending data
+if (AUV_ON == 0){
+sendDataPrepared = 0;
+}
+else{
+sendDataPrepared = selectAction + " " + inputCommandSetpoint + " " + inputCommandMotorPower;
+}
+*/
 }
