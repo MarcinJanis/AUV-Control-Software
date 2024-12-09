@@ -26,6 +26,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -47,6 +48,8 @@ int __io_putchar(int ch){
 	ITM_SendChar(ch);
 	return ch;
 }
+
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -57,6 +60,7 @@ TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart1_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 osThreadId defaultTaskHandle;
@@ -100,9 +104,10 @@ void ExternalCommunicationFcn(void const * argument);
 
 /* Global Variables */
 // Controling constants
-#define Ts 0.05 // sampling time [s]
-#define TaskSamplingTime_ms 50
+#define Ts 0.06 // sampling time [s]
+#define TaskSamplingTime_ms 60
 #define StateControllerSamplingTime_ms 200
+
 // Physical AUV constants
 #define PI 3.141592f
 #define g 9.81f
@@ -144,6 +149,14 @@ bool PitchControllerActive;
 bool YawControllerActive;
 // Recived from ESP8266:
 
+uint8_t RX_Buff[30];
+uint8_t RX_Buff_copy[30];
+uint8_t received_char;
+bool dataReceived=false;
+uint8_t RX_index=0;
+
+int statusMsg=0;
+
 bool NewTask;
 Task TaskTarget; // What should be regulated
 
@@ -153,12 +166,27 @@ float DerivativeTargetOffset=0.1;
 // diagnostics variables
 HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus; // communication diagnostic
 TickType_t cycleStart,cycleDuration; // cycle duration diagnostic
-
-uint8_t buffESP[]="6969";
+TickType_t sysTimeStart;
 // debugging variables:
 bool taskExec;
 float test[3];
 
+
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) {
+    	RX_Buff[RX_index]=received_char;
+    	RX_index++;
+    	if (received_char == '>'){
+    		dataReceived = true;
+    		memcpy(RX_Buff_copy, RX_Buff, RX_index-1);
+    		RX_index=0;
+    		printf("Odebrano dane DMA: %s\n", RX_Buff);
+    		memset(RX_Buff_copy,0,sizeof(RX_Buff_copy));
+    	}
+    	HAL_UART_Receive_DMA(&huart1, &received_char, 1);
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -577,11 +605,15 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
 
@@ -650,6 +682,10 @@ void StartDefaultTask(void const * argument)
 
 
 	  if (initRequest == true){
+
+		  statusMsg = 20; // Init
+		  sysTimeStart = xTaskGetTickCount();
+
 	  	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
 	  	if (pressStartTime == 0) {
 	  		// Start the timer
@@ -829,7 +865,7 @@ void ControllerFcn(void const * argument)
 void StateControlFcn(void const * argument)
 {
   /* USER CODE BEGIN StateControlFcn */
-	typedef enum { // What should be regulated
+	typedef enum {
 	    seting_propper_roll = 0,
 	    changing_regulated_angle = 1,
 	    returning_to_default_pos = 2,
@@ -840,52 +876,58 @@ void StateControlFcn(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-// isSet(float input, float derivative , float setpoint , float input_offset , float derivative_offset )
+
+	  //*********Recive command from ESP**********//
+
+	  //***********State controller**************//
 	  if (NewTask){
 		  stateCounter = 0;
 	  }
 
 	  switch (TaskTarget){
-	  case Roll:
-		  RollControllerActive=true;
-		  PitchControllerActive=false;
-		  YawControllerActive=false;
-		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
-			  stateCounter = regulatation_done;
-		  }
-		  break;
+	  	  case Roll:
+	  		  RollControllerActive=true;
+	  		  PitchControllerActive=false;
+	  		  YawControllerActive=false;
+	  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+	  			  stateCounter = regulatation_done;
+	  		  }
+	  		  break;
 
-	  case Yaw:
-		  switch (stateCounter){
-		  	  case seting_propper_roll:
-		  		  RollControllerActive=true;
-		  		  PitchControllerActive=false;
-		  		  YawControllerActive=false;
-		  		  orientationSetpoint[0]=90.0;
-		  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
-			  				  stateCounter = changing_regulated_angle;
-		  		  }
-			  	  break;
-		  	  case changing_regulated_angle:
-		  		  RollControllerActive=false;
-		  		  YawControllerActive=true;
-		  		  orientationSetpoint[2]=TaskTargetValue;
-		  		  if (isSet(orientationGlobal[2],angularVelocityGlobal[2],orientationSetpoint[2],TaskTargetOffset,DerivativeTargetOffset)){
-		  			  stateCounter = returning_to_default_pos;
-		  		  }
-		  		  break;
-		  	  case returning_to_default_pos:
-		  		  RollControllerActive=true;
-		  		  YawControllerActive=false;
-		  		  orientationSetpoint[0]=0.0f;
-		  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
-		  			  stateCounter = regulatation_done;
-		  		  }
-		  		  break;
-		  	case regulatation_done:
+	  	  case Yaw:
+	  		  switch (stateCounter){
+		  	  	  case seting_propper_roll:
+		  	  		  RollControllerActive=true;
+		  	  		  PitchControllerActive=false;
+		  	  		  YawControllerActive=false;
+		  	  		  orientationSetpoint[0]=90.0;
+		  	  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+		  	  			  stateCounter = changing_regulated_angle;
+		  	  		  }
+		  	  		  break;
 
-		    break;
-		  }
+		  	  	  case changing_regulated_angle:
+		  	  		  RollControllerActive=false;
+		  	  		  YawControllerActive=true;
+		  	  		  orientationSetpoint[2]=TaskTargetValue;
+		  	  		  if (isSet(orientationGlobal[2],angularVelocityGlobal[2],orientationSetpoint[2],TaskTargetOffset,DerivativeTargetOffset)){
+		  	  			  stateCounter = returning_to_default_pos;
+		  	  		  }
+		  	  		  break;
+
+		  	  	  case returning_to_default_pos:
+		  	  		  RollControllerActive=true;
+		  	  		  YawControllerActive=false;
+		  	  		  orientationSetpoint[0]=0.0f;
+		  	  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
+		  	  			  stateCounter = regulatation_done;
+		  	  		  }
+		  	  		  break;
+
+		  	  	  case regulatation_done:
+
+		  	      break;
+	  		  	  }
 
 		  break;
 	  case Pitch:
@@ -899,6 +941,7 @@ void StateControlFcn(void const * argument)
 		  			  	  stateCounter = changing_regulated_angle;
 		  			  }
 		  			  break;
+
 		  		  case changing_regulated_angle:
 		  			  RollControllerActive=false;
 		  			  PitchControllerActive=true;
@@ -907,25 +950,33 @@ void StateControlFcn(void const * argument)
 		  				  stateCounter = returning_to_default_pos;
 		  			  }
 		  			  break;
+
 		  		  case returning_to_default_pos:
 		  		  	 RollControllerActive=true;
 		  		  	 PitchControllerActive=false;
 		  		  	 orientationSetpoint[0]=0.0f;
 		  		  	 if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
 		  		  		stateCounter = regulatation_done;
-		  		  	}
-		  		  	break;
+		  		  	 }
+		  		  	 break;
+
 		  		  case regulatation_done:
 
-		  		  break;
+		  			  break;
 		  		  }
 		  break;
 
 	  }
 
 
+	  //************Set status message************//
 
-
+	  if (mpuInitStatus != HAL_OK || mpuCommStatus != HAL_OK ){
+		  statusMsg = 31; // Error with I2C communication
+	  }
+	  else {
+		  statusMsg = TaskTarget*10+stateCounter;	// xy , where x - what is regulated, y - which state of regulation
+	  }
 	  vTaskDelay(StateControllerSamplingTime_ms);
   }
   /* USER CODE END StateControlFcn */
@@ -941,37 +992,121 @@ void StateControlFcn(void const * argument)
 void ExternalCommunicationFcn(void const * argument)
 {
   /* USER CODE BEGIN ExternalCommunicationFcn */
+
+	//******** Communication with ESP8266 Init ********//
+	HAL_UART_Receive_DMA(&huart1, &received_char, 1);
+
+	//*** Variables - Receive Data ***//
+	char *substr;
+	float RX_Data[6];
+	int index_temp = 0;
+	char RX_data_dest1,RX_data_dest2;
+
+	//*** Variables - Send Data ***//
+	uint8_t buff_to_ESP[60]; // 3x float (%.2f) 3*9
+	const int sendDataSize = 7;
+	float data[6];
+	size_t pos=0;
+	int added_size=0;
   /* Infinite loop */
-	/*
-	// TO DO:
-	1) communication Init, control
-	2) To get:
-	TaskTarget,TaskTargetValue, TaskTargetOffset
-	Regulator Parameters
-	Init
-	Power Motor
-
-	3) to calculate and set
-	NewTask
-	Regulator Parameters
-
-	4) to send
-	Orientation
-	Status
-	Setpoints
-
-	2) Get command: orientation setpoint, motor power,
-	3) Get data: Max, min angle; regulator parameters
-	4) Variable: New Task
-	5) send: orientation, velocity no!
-	*/
   for(;;)
   {
 
+	  //******** Management of Received Data from ESP8266 ********//
+	  if (dataReceived){
+		  printf("RX_Buff_copy: %s\n",RX_Buff);
+		  substr = strtok((char *)RX_Buff, ",");
+		  index_temp=0;
+		  while (substr != NULL) {
 
+			  if (index_temp == 0){
+				  RX_data_dest1 = *substr; // Order or Parameter
+				  printf("Recived category 1: %c\n",RX_data_dest1);
+				  index_temp++;
+			  }
+			  else if (index_temp == 1){
+				  RX_data_dest2 = *substr; // Case 'O' : Roll, Pitch or Yaw; Case 'P'
+				  printf("Recived category 2: %c\n",RX_data_dest1);
+				  index_temp++;
+			  }
+			  else {
+				  RX_Data[index_temp-2] = strtof(substr,NULL); // Convert token to float
+				  printf("Recived %d: %f\n",index_temp,RX_Data[index_temp]);
+				  index_temp++;
+			  }
+			  substr = strtok(NULL, ",");
+		  }
+		  //*** Assign the parameters ***//
+		  if(RX_data_dest1 == 'O'){
 
-	uartStatus=HAL_UART_Transmit(&huart1, buffESP, strlen((char*)buffESP), 500);
-    vTaskDelay(250);
+			  switch (RX_data_dest2 ){
+			  case 'R': // Roll
+				  NewTask = true;
+				  orientationSetpoint[0]=RX_Data[0];
+				  break;
+			  case 'P': // Pitch
+				  NewTask = true;
+				  orientationSetpoint[1]=RX_Data[0];
+				  break;
+			  case 'Y': // Yaw
+				  NewTask = true;
+				  orientationSetpoint[2]=RX_Data[0];
+				  break;
+			  case 'I': // Init
+				  initRequest = true;
+				  break;
+			  }
+		  }
+		  else if (RX_data_dest1 == 'P'){
+			  motorPower_percent = RX_Data[0];
+			  rollController.outMax = RX_Data[1];
+			  rollController.outMin = -RX_Data[1];
+			  directionController.outMax = RX_Data[1];
+			  directionController.outMin = -RX_Data[1];
+
+			  if (RX_data_dest2 == 'R'){
+				  rollController.Kp=RX_Data[2];
+				  rollController.Ki=RX_Data[3];
+				  rollController.Kd=RX_Data[4];
+				  rollController.Nd=RX_Data[5];
+			  }
+			  else if (RX_data_dest2 == 'Y'){
+				  directionController.Kp=RX_Data[2];
+				  directionController.Ki=RX_Data[3];
+				  directionController.Kd=RX_Data[4];
+				  directionController.Nd=RX_Data[5];
+			  }
+		  }
+		  dataReceived = false;
+	  }
+
+	  //******** Send data to ESP8266 ********//
+	  data[0]=((float)(xTaskGetTickCount() - sysTimeStart))/1000; // Actual Time
+	  data[1]=orientationGlobal[0];
+	  data[2]=orientationGlobal[1];
+	  data[3]=orientationGlobal[2];
+	  data[4]=servoAngleRequest[0];
+	  data[5]=servoAngleRequest[1];
+	  data[6]=motorPower_percent;
+	  pos = 1;
+
+	  buff_to_ESP[0]='<';
+	  for (int i=0; i<sendDataSize;i++){
+	  	if (pos < sizeof(buff_to_ESP) - 1) {
+	  		added_size = snprintf((char *)buff_to_ESP + pos, sizeof(buff_to_ESP) - pos,"%.2f,", data[i]);
+	  		pos += added_size;
+	  	}
+	  	else{
+	  			//printf("bufor buff_to_ESP overflow\n");
+	  	}
+	  	added_size = snprintf((char *)buff_to_ESP + pos, sizeof(buff_to_ESP) - pos, "%d>\n",statusMsg);
+	  	//printf("%s\n",buff_to_ESP);
+	  	//printf("Rozmiar buffora: %d\n", sizeof(buff_to_ESP));
+	  }
+
+	  	uartStatus=HAL_UART_Transmit(&huart1, buff_to_ESP, sizeof(buff_to_ESP), 500);
+		vTaskDelay(1200);
+
   }
   /* USER CODE END ExternalCommunicationFcn */
 }
