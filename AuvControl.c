@@ -8,8 +8,8 @@
 
 
 
-#define I2C_TIMEOUT 50
-#define Ts 0.05
+#define I2C_TIMEOUT 60
+#define Ts 0.06
 #define CLK 100000000
 
 
@@ -146,6 +146,7 @@ HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_
 	GyroDataRaw[2] =  (int16_t)(data[12]<<8 | data[13]); // Accell -> Z Axis
 	return status;
 }
+
 
 void accelCalc(int16_t accellDataRaw[3],float accellLocal[3],float orientationAnccelGlobal[3]){
 
@@ -340,6 +341,8 @@ uint16_t OCR_register;
 OCR_register = (uint16_t)(power_percent);
 __HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_2, OCR_register);
 }
+
+
 /*
  float maxTorqueAvailable(torque2angleStruct *scalingParam, float forceArm ,float velocity){
 	return waterDensity*hydrofoilFrontArea*scalingParam->maxLiftCoe*forceArm*pow(velocity,2);
