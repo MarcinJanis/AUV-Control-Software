@@ -732,6 +732,7 @@ void readInputFcn(void const * argument)
   /* Infinite loop */
   for(;;)
   {
+
 	cycleStart = xTaskGetTickCount(); // start counting time of 1 cycle duration
 	mpuCommStatus = mpu6050_update(&hi2c3,MPU6050_ADDRESS,accellRaw,gyroRaw); // read data from MPU
 
@@ -882,6 +883,7 @@ void StateControlFcn(void const * argument)
 	  //***********State controller**************//
 	  if (NewTask){
 		  stateCounter = 0;
+		  NewTask = false;
 	  }
 
 	  switch (TaskTarget){
@@ -1043,19 +1045,25 @@ void ExternalCommunicationFcn(void const * argument)
 			  case 'R': // Roll
 				  NewTask = true;
 				  orientationSetpoint[0]=RX_Data[0];
+				  TaskTarget = Roll;
 				  break;
 			  case 'P': // Pitch
 				  NewTask = true;
 				  orientationSetpoint[1]=RX_Data[0];
+				  TaskTarget = Pitch;
 				  break;
 			  case 'Y': // Yaw
 				  NewTask = true;
 				  orientationSetpoint[2]=RX_Data[0];
+				  TaskTarget = Yaw;
 				  break;
 			  case 'I': // Init
 				  initRequest = true;
 				  break;
 			  }
+			  TaskTargetOffset=RX_Data[1]; // accetable offset
+			  DerivativeTargetOffset=RX_Data[2];
+
 		  }
 		  else if (RX_data_dest1 == 'P'){
 			  motorPower_percent = RX_Data[0];
