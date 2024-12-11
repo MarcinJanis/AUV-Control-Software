@@ -1,8 +1,5 @@
-#include <Wire.h>   // I2C library - not used
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <SPI.h> // SPI - not used
-#include <SoftwareSerial.h>
 
 const char* ssid = "Artus"; // WiFi name
 const char* pass = "ZLKNshiq"; // WiFi password -> change for asking about passwrd and name 
@@ -10,53 +7,116 @@ const char* pass = "ZLKNshiq"; // WiFi password -> change for asking about passw
 WiFiClient client; //creating object WiFi for establish connection
 ESP8266WebServer server(80); // creating Web server object
 
-#define PIN_LED 13 // test diode 
-#define timeDataSend_ms 500
+//#define PIN_LED 13 // test diode 
+#define timeDataSend_ms 1000
 
-
-
-SoftwareSerial mySerial(D5, D6);
- // global variables init
-    float orientationSample[3]={0,0,0};
-    float timeBaseSample = 0;
-    float motorPowerActual=0;
-    float motorPowerDemand=0;
-    String statusMsg;
-
+    String incomingData[8]={"99.99","99.99","99.99","99.99","99.99","99.99","99.99","75"};
+    bool ServerON = false;
     bool chartUpdate = false;
 
     int i=0;
     int fromSTM = 2137;
     int fromSTMsize = 0 ;
 
+void USART_GetData_simul(){
+randomSeed(analogRead(0));
+for (int i=0;i<8;i++){
+  incomingData[i]=String(random(0,200))+"."+String(random(0,99));
+}
+delay(33);
+}
+
+void USART_GetData(){
+  int timeStart;
+  int waiting_time=0;
+  int timeout = 400;
+  bool StartOk = false;
+  bool EndOk = false;
+  if (Serial.available()) {
+    digitalWrite(LED_BUILTIN, HIGH);
+    while (Serial.available() < 60 || waiting_time < timeout) {
+    delay(1); // Wait for full buffer
+    waiting_time++;
+    }
+    //Serial.println("Dane do przeczytania... ");
+    String out="";
+    while (Serial.available()) {
+      char c = Serial.read();
+      //Serial.print(c);
+      if ( c == '<'){
+        out = ""; 
+        StartOk = true;
+      }
+      else if ( c == '>'){
+        EndOk = true;
+      }
+      else if ( c != '>' && EndOk == false){
+        out += c;
+      }
+    }
+    //Serial.println("!");
+    //Serial.print("Dane: ");
+    //Serial.println(out);
+    //Serial.print("Buffer state: ");
+    //Serial.println(Serial.available());
+    if (StartOk == true && EndOk == true){
+      int searchStart=0;
+      int indexOfNext=0;
+      for (int i = 0; i<7;i++){
+        indexOfNext=out.indexOf(',',searchStart);
+        String part = out.substring(searchStart,indexOfNext);
+        part.replace("\0", "");
+        incomingData[i]=String(part);
+        //Serial.print("sub string: ");
+        //Serial.println(part);
+        //Serial.print("Data: ");
+        //Serial.println(incomingData[i]);
+        searchStart = indexOfNext+1;
+        }
+      String part = out.substring(searchStart,searchStart+2);
+      incomingData[7]=part;
+      }
+      else{
+      //Serial.println("Incorrect Data");
+      incomingData[7]="CommErr";
+      digitalWrite(LED_BUILTIN, LOW);
+      }
+      
+  }
+}
 
 
 void setup()
 {
-  pinMode(PIN_LED, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
-
   Serial.begin(115200); // Serial monitor init
-  mySerial.begin(115200);
-  mySerial.setTimeout(100);  // Ustaw timeout na 100 ms
 
   WiFi.begin(ssid, pass); // Connect to WiFi 
-  Serial.print("Connecting ... "); 
+  //Serial.print("Connecting ... "); 
 // __________ Connecting to WiFi _______________
 // Connecting animation
   while(WiFi.status() != WL_CONNECTED) 
   {
-    Serial.print("."); 
+    //Serial.print("."); 
     delay(400);
-    Serial.print("\b "); 
-    delay(400);
+    //Serial.print("\b "); 
+    //delay(400);
   }
-  
-  Serial.println(); // New line
-  Serial.print("Connected to: "); // Display connection communicat
-  Serial.println( String(ssid) );
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP()); // Display IP adress
+  ServerON = true;
+  //Serial.println(); // New 
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(400);
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(400);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(400);
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(400);
+  digitalWrite(LED_BUILTIN, LOW);
+  //Serial.print("Connected to: "); // Display connection communicat
+  //Serial.println( String(ssid) );
+  //Serial.print("IP: ");
+  //Serial.println(WiFi.localIP()); // Display IP adress
 
   // Functions that handle server:
   server.on("/", handleRoot); // Root page
@@ -64,9 +124,6 @@ void setup()
   server.on("/Data", handleData); // sending measurements
   server.begin();
 
-  // do usuniecia:
-  // Inicjalizacja generatora liczb losowych
-  randomSeed(analogRead(0)); // Możesz użyć dowolnego analogowego pinu
 }
 
 void handleRoot()
@@ -80,16 +137,18 @@ void handleRoot()
     html += "</body></html>";
     server.send(200, "text/html", html);
 }
-//random(200, 300)
+
 void handleData() {
   // Sending data from server in json format ( string=" {\"name1\": 123, \"name2\": 456} )
  String jsonResponse = "{";
-  jsonResponse += "\"timeSample\":" + String(timeBaseSample, 2) + ",";  // 2 miejsca po przecinku
-  jsonResponse += "\"rollSample\":" + String(orientationSample[0], 2) + ",";
-  jsonResponse += "\"pitchSample\":" + String(orientationSample[1], 2) + ",";
-  jsonResponse += "\"yawSample\":" + String(orientationSample[2], 2) + ",";
-  jsonResponse += "\"motorPower\":" + String(motorPowerActual, 2) + ",";
-  jsonResponse += "\"statusMsg\":\"" + statusMsg + "\"";  // statusMsg jako string w JSON
+  jsonResponse += "\"timeSample\":\"" + incomingData[0] + "\",";  // 2 miejsca po przecinku
+  jsonResponse += "\"rollSample\":\"" + incomingData[1] + "\",";
+  jsonResponse += "\"pitchSample\":\"" + incomingData[2] + "\",";
+  jsonResponse += "\"yawSample\":\"" + incomingData[3] + "\",";
+  jsonResponse += "\"motorPower\":\"" + incomingData[6] + "\",";
+  jsonResponse += "\"servoRightActual\":\"" + incomingData[4] + "\",";
+  jsonResponse += "\"servoLeftActual\":\"" + incomingData[5] + "\",";
+  jsonResponse += "\"statusMsg\":\"" + incomingData[7] + "\"";
   jsonResponse += "}";
     server.send(200, "application/json", jsonResponse); // Send to panel
 }
@@ -133,12 +192,25 @@ void handleOn() {
             border: 2px solid black; 
             padding: 3%;              
             border-radius: 5px;        
-            width: fit-content;        
+            width: 200px;        
             background-color: #F5F5F5; 
           }
+
+	   h4 {
+            /* Header 4 - data box  */
+            font-size: 15px;
+            color: black; 
+            margin-right: 10%; 
+            border: 2px solid black; 
+            padding: 3%;              
+            border-radius: 5px;        
+            width: 300px;        
+            background-color: #F5F5F5; 
+          }
+
                   
           table {
-            width: 50%; /* Width of table */
+            width: 30%; /* Width of table */
             //border-collapse: collapse; /* Delete distances in table (?) */
             margin: 5%; /* Space before and after table */
             font-family: Arial, sans-serif; /* Font */
@@ -150,7 +222,7 @@ void handleOn() {
               background-color: darkblue; /* Navy background */
               border: 2px solid black; /* Gray borders */
               color: white; /* White font */
-              padding: 10px; /* Inner space */
+              padding: 8px; /* Inner space */
               text-align: center; /* Center text */
             }
 
@@ -217,27 +289,53 @@ void handleOn() {
               <div class="column" > 
                 <div class="form-container">
                 <h2> Command Panel: </h2>
-                  <form id="dataForm">
-                    <label for="selectAction">    Controlled parametr: </label>
+                  <form id="dataForm1">
+                    <h4><label for="selectAction">    Controlled parametr: </label>
                     <select id="selectAction" name="selectAction">
-                      <option value="Roll"> Roll </option>
-                      <option value="Pitch"> Pitch </option>
-                      <option value="Yaw"> Yaw </option>
-                      <option value="ForFutureDevelop"> ForFutureDevelop </option>
-                    </select>
-                  <br><br>
-                  <label for="dataInput">Setpoint [deg]: </label>
+                      <option value="R"> Roll </option>
+                      <option value="P"> Pitch </option>
+                      <option value="Y"> Yaw </option>
+                      <option value="I"> Initialization </option>
+                    </select></h4>
+                  
+                  <h4><label for="dataInput">Setpoint [deg]: </label>
                   <input type="text" id="dataInputSetpoint" name="dataInput" placeholder=" ... " required>
-                  <input type="submit" value="Set">
-                  <br><br>
-                  <label for="dataInput">Motor Power [%]: </label>
-                  <input type="text" id="dataInputMotorPower" name="dataInput" placeholder=" ... " required>
-                  <input type="submit" value="Set">
+                  <input type="submit" value="Set"></h4>
+                  <h4><label for="dataInput">Setpoint Offsset[%]: </label>
+                  <input type="text" id="dataInputSetpointErr1" name="dataInput" placeholder=" ... " required>
+                  <label for="dataInput">Ang. Velocity Offset [deg/s]: </label>
+                  <input type="text" id="dataInputSetpointErr2" name="dataInput" placeholder=" ... " required>
+                  <input type="submit" value="Set"></h4>
+                </form>
+
+                <form id="dataForm2">
+
+                  <h4><label for="dataInput">Motor Power [%]: </label>
+                  <input type="text" id="dataInputMotorPower" name="dataInput" placeholder=" 0 " value="0">
+                  <input type="submit" value="Set"></h4>
+
+                  <h4><label for="dataInput">Max Servo Angle [deg] </label>
+                  <input type="text" id="dataInputMaxServo" name="dataInput" placeholder=" 30 " value="30">
+                  <input type="submit" value="Set"></h4>
+
+                  <h4><label for="dataInput">PID</label><br>
+                  <label for="selectReg">Parameters for:&nbsp;</label>
+                  <select id="selectReg" name="selectAction"> 
+                  <option value="R"> Roll </option>
+                  <option value="Y"> Pitch and Yaw </option>
+	                </select>&nbsp;regulator<br>
+                  P: <input type="text" id="dataInputPID_P" name="dataInput" placeholder="1.37" required> <br>
+                  I:&nbsp;  <input type="text" id="dataInputPID_I" name="dataInput" placeholder="0.8" required> <br>
+                  D: <input type="text" id="dataInputPID_D" name="dataInput" placeholder="0.45" required> <br>
+                  N: <input type="text" id="dataInputPID_N" name="dataInput" placeholder="13.24" required>
+                  <br><input type="submit" value="Set"></h4>
 
                 </form>
+
               </div>
               </div>
               <div class="column" > 
+		<h2> Setpoints: </h2>
                 <h3>
                   <p id="rollSetpoint">Roll setpoint [deg]: 0</p>
                   <p id="pitchSetpoint">Pitch setpoint [deg]:  0</p>
@@ -246,13 +344,14 @@ void handleOn() {
                 </h3>
               </div>
               <div class="column" > 
+	      <h2> Actual state: </h2>
                 <h3>
                   <p id="rollActual">Roll value [deg]: 0</p>
                   <p id="pitchActual">Pitch value [deg]:  0</p>
                   <p id="yawActual">yaw value [deg]:  0</p>
-                  <br>
-                  <p id="motorActual">Motor Power [%]:  0</p>
-                  <p id="stateMsg"> State:  0</p>
+		</h3>
+                  <h3><p id="motorActual">Motor Power [%]:  0</p></h3>
+                  <h3><p id="stateMsg"> State:  0</p></h3>
                 </h3>
               </div>
             </div>
@@ -265,6 +364,8 @@ void handleOn() {
                         <th> Roll [deg] </th>
                         <th> Pitch  [deg]  </th>
                         <th> Yaw [deg] </th>
+                        <th> Right Servo [deg] </th>
+                        <th> Left Servo [deg] </th>
                     </tr>
                 </thead>
                 <tbody>
@@ -276,6 +377,7 @@ void handleOn() {
             //  Global Var: 
                 var AUV_ON=0;
                 var timeSample, rollSample, pitchSample , yawSample , motorPower, statusMsg; // data to send to Panel
+                var servoLeftActual, servoRightActual, RollSetPoint, PitchSetPoint, YawSetPoint;
                 var rowAmount=0;
                 var rowMaxAmount=60;
                 var updateTableOn=0;
@@ -292,6 +394,20 @@ void handleOn() {
                     document.getElementById("motorOnButton").innerText = "Start Motor";
                     document.getElementById("motorOnButton").classList.remove("ButtonOn");
                     document.getElementById("motorOnButton").classList.add("ButtonOff");
+
+                    $.ajax({
+                      url: 'http://192.168.100.61/on', 
+                      type: "POST",
+                      data: { 
+                        dataInput: "0"  // Send data
+                      },
+                      success: function(response) {
+                        console.log("Data sent correctly: ", response);
+                      },
+                      error: function(error) {
+                        console.log("Error while sending data: ", error);
+                      }
+                    });
                   }
 
 
@@ -311,7 +427,7 @@ void handleOn() {
                 });
 
                 });
-                
+              
                 document.getElementById("updateTableOnButton").addEventListener("click", function() {
                 updateTableOn = !updateTableOn;
                 if (updateTableOn) {
@@ -325,7 +441,6 @@ void handleOn() {
                   }
                 timeSample = 0;
                 });
-
                 function updateNumber() {
                     $.ajax({
                         url: '/Data', // Server demand
@@ -338,21 +453,34 @@ void handleOn() {
                             pitchSample = data.pitchSample;
                             yawSample = data.yawSample;
                             motorPower = data.motorPower;
+                            servoLeftActual= data.servoLeftActual;
+                            servoRightActual= data.servoRightActual;
+                            RollSetPoint = data.RollSetPoint;
+                            PitchSetPoint = data.PitchSetPoint;
+                            YawSetPoint= data.YawSetPoint;
                             statusMsg = data.statusMsg;
                             addRow(); // Add another row
                             displayActual();
+                            displaySetpoints();
+                        },
+                        error: function(error) {
+                          console.log("Error while fetching data:", error);
+                        },
+                        complete: function() {
+                          setTimeout(updateNumber, 1000);  
                         }
                     });
                 }
-
+                updateNumber();
                 function addRow() {
                   // Formatting of new row 
                     var col1 = timeSample;
                     var col2 = rollSample;
                     var col3 = pitchSample;
                     var col4 = yawSample;
-                    
-                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td></tr>";
+                    var col5 = servoRightActual;
+                    var col6 = servoLeftActual;
+                    var newRow = "<tr><td>" + col1 + "</td><td>" + col2 + "</td><td>" + col3 + "</td><td>" + col4 + "</td><td>" + col5 + "</td><td>" + col6 + "</td></tr>";
                   // Adding new row
                   if (updateTableOn == 1){
                     $('#MeasurementTable tbody').append(newRow);
@@ -364,31 +492,35 @@ void handleOn() {
                     }
                     }
                 }
-                function displayActual(){
-                                    
-                    document.getElementById("rollActual").innerText = "Roll Value [deg]: " + rollSample;
+                function displayActual(){             
+                    document.getElementById("rollActual").innerText = "Roll Value [deg]:  " + rollSample;
                     document.getElementById("pitchActual").innerText = "Pitch Value [deg]: " + pitchSample;
-                    document.getElementById("yawActual").innerText = "Yaw Value [deg]: " + yawSample;
-                    document.getElementById("motorActual").innerText = "Motor Power [%]:" + motorPower;
-                    document.getElementById("stateMsg").innerText = "State: " + statusMsg;
+                    document.getElementById("yawActual").innerText = "Yaw Value [deg]:   " + yawSample;
+                    document.getElementById("motorActual").innerText = "Motor Power [%]:   " + motorPower;
+                    document.getElementById("stateMsg").innerText = "State:  " + statusMsg;
                 }
-
-                setInterval(updateNumber, 1000); // Call function every 1000 ms
-
-                // Command send form 
-              $('#dataForm').on('submit', function(event) {
+                function displaySetpoints(){             
+                    document.getElementById("rollSetpoint").innerText =  "Roll Setpoint [deg]:   " + RollSetPoint;
+                    document.getElementById("pitchSetpoint").innerText = "Pitch Setpoint [deg]: " + PitchSetPoint;
+                    document.getElementById("yawSetpoint").innerText =   "Yaw Setpoint [deg]:    " + YawSetPoint;
+                }
+                //setInterval(updateNumber, 1000);
+                // Command send form 1 - Task managmenet
+              $('#dataForm1').on('submit', function(event) {
                 event.preventDefault(); // Blocking defoault work 
 
                 var inputCommandSetpoint = $('#dataInputSetpoint').val(); // Get value from input form -> Setpoint
-                var inputCommandMotorPower = $('#dataInputMotorPower').val(); // Get value from input form -> Motor Power
                 var selectAction = $('#selectAction').val(); // Pobranie wartości z listy rozwijanej
+                var Offset1 = $('#dataInputSetpointErr1').val(); // Pobranie wartości z listy rozwijanej
+                var Offset2 = $('#dataInputSetpointErr2').val(); // Pobranie wartości z listy rozwijanej
+
 
                 // Sending data
                 if (AUV_ON == 0){
-                  sendDataPrepared = 0;
+                  sendDataPrepared = "0";
                 }
                 else{
-                  sendDataPrepared = selectAction + " " + inputCommandSetpoint + " " + inputCommandMotorPower;
+                  sendDataPrepared = "O," + selectAction + "," + inputCommandSetpoint+"," + Offset1 + "," + Offset2;
                 }
                 $.ajax({
                   url: 'http://192.168.100.61/on', 
@@ -405,7 +537,38 @@ void handleOn() {
                   }
                 });
               });
+              // Command send form 2 - Task managmenet
+              $('#dataForm2').on('submit', function(event) {
+              event.preventDefault(); // Blocking defoault work 
+                var inputCommandMotorPower = $('#dataInputMotorPower').val(); // Get value from input form -> Motor Power
+                var inputCommandMaxServo = $('#dataInputMaxServo').val(); // Get value from input form -> Max Servo 
+                var inputCommandPID_P = $('#dataInputPID_P').val(); // Get value from input form -> PID_P
+                var inputCommandPID_I = $('#dataInputPID_I').val(); // Get value from input form -> PID_I
+                var inputCommandPID_D = $('#dataInputPID_D').val(); // Get value from input form -> PID_D
+                var inputCommandPID_N = $('#dataInputPID_N').val(); // Get value from input form -> PID_N
+                var inputCommandReg = $('#selectReg').val(); 
+                // Sending data
+                if (AUV_ON == 0){
+                  inputCommandMotorPower = 0
+                }
+                
+                sendDataPrepared = "P," + inputCommandReg + "," + inputCommandMotorPower + "," + inputCommandMaxServo + "," + inputCommandPID_P + "," + inputCommandPID_I + "," + inputCommandPID_D + "," + inputCommandPID_N;
+                
+                $.ajax({
+                  url: 'http://192.168.100.61/on', 
+                  type: "POST",
+                  data: { 
+                    dataInput: sendDataPrepared  // Send data
+                  },
+                  success: function(response) {
+                    console.log("Data sent correctly: ", response);
 
+                  },
+                  error: function(error) {
+                    console.log("Error while sending data: ", error);
+                  }
+                });
+              });
 
             </script>
         </body>
@@ -415,44 +578,19 @@ void handleOn() {
   server.send(200, "text/html", html);
 
   if (server.hasArg("dataInput")) {
-      String receivedData = server.arg("dataInput");
-      Serial.println("Data Recived: " + receivedData);
+      String data_to_send = server.arg("dataInput");
+      Serial.print(data_to_send+">");
   }
 }
 
 
+
+
 void loop()
 {
-
-
-  server.handleClient(); // funkcja odpowiadające za obsługę serwera
-  delay(50); 
-// communication:
-
-timeBaseSample = random(200, 300);
-orientationSample[0] = 2.4f + random(200, 300) / 100.0f;
-orientationSample[1] = 3.9f + random(200, 300) / 100.0f;
-orientationSample[2] = 0.9f + random(200, 300) / 100.0f;
-motorPowerActual = random(200, 300) / 100.0f;
-statusMsg= "Dobrze jestt!";
-
-/*
-  fromSTMsize = mySerial.available();
-  if (mySerial.available()) {
-    digitalWrite(LED_BUILTIN, LOW);  // Zaświeć LED                    // Czekaj 1 sekundę            // Czekaj 1 sekundę
-    String buffer = mySerial.readString();
-    fromSTM = buffer.toInt();
-    digitalWrite(LED_BUILTIN, HIGH); // Zgaś LED 
-    //Serial.println("Data recived: " + fromSTM);
-
-*/
-/*
-// Sending data
-if (AUV_ON == 0){
-sendDataPrepared = 0;
-}
-else{
-sendDataPrepared = selectAction + " " + inputCommandSetpoint + " " + inputCommandMotorPower;
-}
-*/
+      //  int timeStart =millis();
+        server.handleClient(); // Obsługuje zapytania HTTP
+        USART_GetData(); // Odbieranie danych przez USART
+      //  Serial.print("Cycle duration: ");
+      //  Serial.println(millis() - timeStart);
 }
