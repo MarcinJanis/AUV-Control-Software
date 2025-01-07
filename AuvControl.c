@@ -8,18 +8,17 @@
 
 
 
-#define I2C_TIMEOUT 60
+#define I2C_TIMEOUT 200
 #define Ts 0.06
 #define CLK 100000000
 
 
 #define PI 3.141592f
 #define g 9.81f
+//float debugMatrix[3];
 
-float debugMatrix[3];
-float Q=0.2; //0.1;
-float V=1.7; //1.2;
 
+uint16_t testO[2];
 float deg2rad(float input){
 	return input*PI/180.0;
 }
@@ -73,7 +72,7 @@ bool isSet(float input, float derivative , float setpoint , float input_offset ,
 
 	bool output;
 
-	if (fabs(input) <= (setpoint + input_offset) ){
+	if ( input <= (setpoint + input_offset) && input >= (setpoint - input_offset) ){
 		if (fabs(derivative) <= (derivative_offset)){
 			output = true;
 		}
@@ -83,6 +82,8 @@ bool isSet(float input, float derivative , float setpoint , float input_offset ,
 
 	return output;
 }
+
+
 
 HAL_StatusTypeDef mpu6050_init(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS){
 // initialization of MPU6050
@@ -148,7 +149,7 @@ HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_
 }
 
 
-void accelCalc(int16_t accellDataRaw[3],float accellLocal[3],float orientationAnccelGlobal[3]){
+void accelCalc(int16_t accellDataRaw[3],float accellLocal[3],float orientationAccelGlobal[3]){
 
 	// AccelDataRaw is input tab, data from accelerometr, size of AccelDataRaw shall be 3;
 	// Acceleration is output tab, Acceleration in local frame, size of Acceleration shall be 3;
@@ -159,42 +160,40 @@ void accelCalc(int16_t accellDataRaw[3],float accellLocal[3],float orientationAn
 	}
 
 	//orientationAnccelGlobal[0]=atan2(accellLocal[1],sqrt(pow(accellLocal[0],2)+pow(accellLocal[2],2)))*180/PI;
-	orientationAnccelGlobal[0]=atan2(accellLocal[1],accellLocal[2])*180/PI;
-	orientationAnccelGlobal[1]=atan2(-accellLocal[0],sqrt(pow(accellLocal[1],2)+pow(accellLocal[2],2)))*180/PI;
+	orientationAccelGlobal[0]=atan2(accellLocal[1],accellLocal[2])*180/PI;
+	orientationAccelGlobal[1]=atan2(-accellLocal[0],sqrt(pow(accellLocal[1],2)+pow(accellLocal[2],2)))*180/PI;
 }
 
 void gyroCalc(int16_t gyroDataRaw[3], float gyroDataScaled[3]){
 
 	for (int i=0; i<=2; i++){
-		gyroDataScaled[i]=gyroDataRaw[i]/131.0f; // ustalic czy ma tu być minus czy nie
+		gyroDataScaled[i]=gyroDataRaw[i]/131.0f;
 	}
 }
 
 void kalmanFilter(float orientationAccellGlobal[3], float gyroGlobal[3], float orientationGlobal[3], float accellLocal[3],float gyroBias[3], bool NavigInitDone){
-	float PredictErr; //Q Covariance ...
-	float CorrectErr; //R Covariance ...
+
+
+	const float Q[2]={0.001883,0.002391}; //Predict Err Variance
+	const float V[2]={0.015305,0.014857}; //Correct Err Variance
 	static float K[2] = {0,0}; // Kalman Gain
 	static float xCorrect[2] = {0,0};
 	static float pPredict[2] = {1,1};
 	static float xPredict[2],pCorrect[2];
-	//static float result[2];
-	//static int quart[2]={1,1};
 
-	PredictErr=Q;
-	CorrectErr=V;
 		for (int i=0;i<=1;i++){
+
 			// 1. Prediction Phase
 			xPredict[i] = xCorrect[i] + (Ts * (gyroGlobal[i])); //State prediction
-			pPredict[i] = pCorrect[i] + PredictErr; //Covariance prediction
-			K[i] = pPredict[i]/(CorrectErr + pPredict[i]); //Kalman's Gain calculation
+			pPredict[i] = pCorrect[i] + Q[i]; //Covariance prediction
+			K[i] = pPredict[i]/(V[i] + pPredict[i]); //Kalman's Gain calculation
 
 			// 2. Correction phase
 			xCorrect[i] = xPredict[i] + K[i]*(orientationAccellGlobal[i] - xPredict[i]); //State correction
 			pCorrect[i] = (1 - K[i])*pPredict[i]; //Covariance correction
 			orientationGlobal[i]=xCorrect[i];
 
-		} // end of for()
-
+		}
 
 		if (NavigInitDone == true){
 				xCorrect[0]=orientationAccellGlobal[0];
@@ -221,10 +220,6 @@ void vectTransform(float orientationGlobal[3], float gyroLocal[3],float gyroBias
 	matrixMultiply(3,3,Ryaw,3,3,Rpitch,Rtemp);// R = Ryaw * Rpitch
 	matrixMultiply(3,3,Rtemp,3,3,Rroll,R); // R = R * Rroll
 
-	//wGlobal[0][0] = 0; // unnecessary propably
-	//wGlobal[1][0] = 0;
-	//wGlobal[2][0] = 0;
-
 	// Calculate Angular Velocity Matrix in global frame based on Rotation Matrix
 	wLocal[0][0] = (gyroLocal[0]-gyroBias[0]);
 	wLocal[1][0] = (gyroLocal[1]-gyroBias[1]);
@@ -245,27 +240,7 @@ void vectTransform(float orientationGlobal[3], float gyroLocal[3],float gyroBias
 
 }
 
-void positionEvaluate(float positionGlobal[3],float accellGlobal[3] ,bool NavigInitDone){
-	/// Low-Pass Filter here???
-	static float velocityGlobal[3]={0.0f};
-	//float temp;
 
-	for (int i=0;i<=2;i++){
-			//temp=roundf(g*accellGlobal[i]*Ts*10000)/100; // cm/s
-			velocityGlobal[i]+=g*accellGlobal[i]*Ts;
-			}
-
-	for (int i=0;i<=2;i++){
-			positionGlobal[i]+= velocityGlobal[i]*Ts; // cm
-			}
-
-	if (NavigInitDone == true){
-		for (int i=0;i<=2;i++){
-			positionGlobal[i]=0.0f;
-			velocityGlobal[i]=0.0f;
-		}
-	}
-}
 
 void velocityLocal(float *velocity, float accelerationLocal[3], float orientationGlobal[3], bool NavigInitDone){
 /* Matrix [0;0;1] transform with invers rotation matrix (global to local )
@@ -275,34 +250,48 @@ void velocityLocal(float *velocity, float accelerationLocal[3], float orientatio
  *
  */
 
-	//*velocity += g *( accelerationLocal[0] - sin(deg2rad(orientationGlobal[1])) )* Ts;
 	float grav_temp = sin(deg2rad(orientationGlobal[0]))*sin(deg2rad(orientationGlobal[2])) + (cos(deg2rad(orientationGlobal[0]))*cos(deg2rad(orientationGlobal[2])) * sin(deg2rad(orientationGlobal[1])));
 	*velocity += g *( accelerationLocal[0] + grav_temp )* Ts;
-	//〖v_lx〗_k=〖v_lx〗_(k-1)+(a_lx-g(sin(φ)*sin(ψ) + cos(φ)*cos(ψ)*sin(θ))) T_s
-	debugMatrix[0]= grav_temp;
-	debugMatrix[1]= accelerationLocal[0] + sin(deg2rad(orientationGlobal[1]));
+
+	//debugMatrix[0]= grav_temp;
+	//debugMatrix[1]= accelerationLocal[0] + sin(deg2rad(orientationGlobal[1]));
 	if (NavigInitDone == true){
 		*velocity = 0.0f;
 	}
-	// Low Pass Filter maybe or use only 2 digits
+
 }
 
 
 
 
 float PIDcontroller(regulator_PID *ctrlParam, float input,float setpoint, bool reset){
-	// returns required torque
+
 	float error = input - setpoint;
-	float derivative = (ctrlParam->Kd * ctrlParam->Nd * (error - ctrlParam->error_prev)) / (1 + (ctrlParam->Nd * Ts));
+	// Integration
+	if (!ctrlParam->isSaturation)ctrlParam-> integrator += error*ctrlParam->T; // Integration with anti-Windup (clamping method)
+	// Derivative factor
+	float derivative = (ctrlParam->Kd * ctrlParam->Nd * (error - ctrlParam->error_prev)) / (1 + (ctrlParam->Nd * ctrlParam->T));
+	derivative = derivative - ctrlParam -> deriv_prev * ctrlParam->Nd * ctrlParam->T / (1 + (ctrlParam->Nd * ctrlParam->T));
+
+
+	//Output calculation
 	float output = ctrlParam->Kp*error + derivative + ctrlParam->Ki*ctrlParam->integrator;
+	if (output > ctrlParam->outMax){
+		output = ctrlParam->outMax; // Max output limitation
+		ctrlParam->isSaturation = true; // Set output saturation flag
+	}
+	else if (output < ctrlParam->outMin){
+		output = ctrlParam->outMin; // Min output limitation
+		ctrlParam->isSaturation = true; // Set output saturation flag
+	}
+	else ctrlParam->isSaturation = false; // Reset output saturation flag
 
-	ctrlParam->error_prev=error; // store prevoius error
+	// store data for next iteration
+	ctrlParam->error_prev=error;
+	ctrlParam -> deriv_prev = derivative;
 
-	if (output > ctrlParam->outMax) output = ctrlParam->outMax; // Max output limitation
-	else if (output < ctrlParam->outMin) output = ctrlParam->outMin; // Min output limitation
-	else ctrlParam-> integrator += error*Ts; // integration with anty wind-up (clamping method)
-
-	if (reset == true){
+	// reset regulator
+	if (reset){
 			ctrlParam->integrator=0.0f;
 			ctrlParam->error_prev=0.0f;
 			output = 0.0f;
@@ -324,8 +313,10 @@ void servoInit(TIM_HandleTypeDef *htim){
 
 void servoSet(float servoAngle[2],TIM_HandleTypeDef *htim){
 uint16_t OCR_register_Servo_Right, OCR_register_Servo_Left ;
-OCR_register_Servo_Right = (uint16_t)((servoAngle[0]*2500.0f/360.0f) + 3749);
-OCR_register_Servo_Left = (uint16_t)((servoAngle[1]*2500.0f/360.0f) + 3749);
+OCR_register_Servo_Right = (uint16_t)((servoAngle[0]*5000.0f/180.0f) + 3750);
+OCR_register_Servo_Left = (uint16_t)((-servoAngle[1]*5000.0f/180.0f) + 3750);
+testO[0]=(uint16_t)((servoAngle[0]*5000.0f/180.0f) + 3750);
+testO[1]=(uint16_t)((servoAngle[1]*2500.0f/180.0f) + 3750);
 __HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_1, OCR_register_Servo_Right);
 __HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_2, OCR_register_Servo_Left);
 }
@@ -336,53 +327,39 @@ void motorInit(TIM_HandleTypeDef *htim){
 }
 
 void motorSet(float power_percent,TIM_HandleTypeDef *htim){
-
+	// 0% motor power -> 70% duty cycle
+	// 100% motor power -> 100% duty cycle
+if (power_percent > 100) power_percent = 100;
+if (power_percent < 0) power_percent = 0;
 uint16_t OCR_register;
-OCR_register = (uint16_t)(power_percent);
+OCR_register = (uint16_t)((100.0f - power_percent)/100.0f*4999);
 __HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_2, OCR_register);
 }
 
-
 /*
- float maxTorqueAvailable(torque2angleStruct *scalingParam, float forceArm ,float velocity){
-	return waterDensity*hydrofoilFrontArea*scalingParam->maxLiftCoe*forceArm*pow(velocity,2);
-}
-
-float torque2angle(float torqueDemand, torque2angleStruct *scalingParam, float forceArm , float velocity ){
-	// Calculate right servo angle, left shall be set to the same or negative value
-	float Cy=(torqueDemand/forceArm)/(waterDensity*hydrofoilFrontArea*pow(velocity,2));
-	float angleRight=0;
-		for (int i=0; i<10; i++){
-			angleRight = angleRight + scalingParam->coe[i]*pow(Cy,(10-i));
-		}
-		angleRight=angleRight+scalingParam->coe[10];
-
-		if (angleRight > scalingParam->maxStableAngle ){
-			angleRight = scalingParam->maxStableAngle;
-		}
-		else if (angleRight < -(scalingParam->maxStableAngle) ){
-			angleRight = -(scalingParam->maxStableAngle);
-		}
-		return angleRight;
-}
  *
  *
- */
+ *
+ *
+ *
+ *
+ void positionEvaluate(float positionGlobal[3],float accellGlobal[3] ,bool NavigInitDone){
+	static float velocityGlobal[3]={0.0f};
+	for (int i=0;i<=2;i++){
+			//temp=roundf(g*accellGlobal[i]*Ts*10000)/100; // cm/s
+			velocityGlobal[i]+=g*accellGlobal[i]*Ts;
+			}
+	for (int i=0;i<=2;i++){
+			positionGlobal[i]+= velocityGlobal[i]*Ts; // cm
+			}
+	if (NavigInitDone == true){
+		for (int i=0;i<=2;i++){
+			positionGlobal[i]=0.0f;
+			velocityGlobal[i]=0.0f;
+		}
+	}
+}
 
-
-/*
-typedef struct{
-	// Max size of tab will be 10
-
-	// to define before use
-	 bool IIR; // true if its IIR type filter
-	 int order; // max is 10
-	 float numMatrix[11];
-	 float denumMatrix[11];
-	// memory
-	 float inRegister[11]; // need to be init
-	 float outRegister[11]; // need to be init
-}filterStruct;
 
 float filter(filterStruct *filterData ,float input, bool NavigInitDone){
 
