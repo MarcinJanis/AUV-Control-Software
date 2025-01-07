@@ -7,24 +7,11 @@ const char* pass = "ZLKNshiq"; // WiFi password -> change for asking about passw
 WiFiClient client; //creating object WiFi for establish connection
 ESP8266WebServer server(80); // creating Web server object
 
-//#define PIN_LED 13 // test diode 
 #define timeDataSend_ms 1000
 
-    String incomingData[8]={"99.99","99.99","99.99","99.99","99.99","99.99","99.99","75"};
+    String incomingData[8]={"0.0","0.0","0.0","0.0","0.0","0.0","0.0","-1"};
     bool ServerON = false;
     bool chartUpdate = false;
-
-    int i=0;
-    int fromSTM = 2137;
-    int fromSTMsize = 0 ;
-
-void USART_GetData_simul(){
-randomSeed(analogRead(0));
-for (int i=0;i<8;i++){
-  incomingData[i]=String(random(0,200))+"."+String(random(0,99));
-}
-delay(33);
-}
 
 void USART_GetData(){
   int timeStart;
@@ -35,8 +22,8 @@ void USART_GetData(){
   if (Serial.available()) {
     digitalWrite(LED_BUILTIN, HIGH);
     while (Serial.available() < 60 || waiting_time < timeout) {
-    delay(1); // Wait for full buffer
-    waiting_time++;
+      delay(1); // Wait for full buffer
+      waiting_time++;
     }
     //Serial.println("Dane do przeczytania... ");
     String out="";
@@ -54,11 +41,7 @@ void USART_GetData(){
         out += c;
       }
     }
-    //Serial.println("!");
-    //Serial.print("Dane: ");
-    //Serial.println(out);
-    //Serial.print("Buffer state: ");
-    //Serial.println(Serial.available());
+    
     if (StartOk == true && EndOk == true){
       int searchStart=0;
       int indexOfNext=0;
@@ -67,21 +50,15 @@ void USART_GetData(){
         String part = out.substring(searchStart,indexOfNext);
         part.replace("\0", "");
         incomingData[i]=String(part);
-        //Serial.print("sub string: ");
-        //Serial.println(part);
-        //Serial.print("Data: ");
-        //Serial.println(incomingData[i]);
         searchStart = indexOfNext+1;
         }
       String part = out.substring(searchStart,searchStart+2);
       incomingData[7]=part;
       }
-      else{
-      //Serial.println("Incorrect Data");
+    else{
       incomingData[7]="CommErr";
       digitalWrite(LED_BUILTIN, LOW);
       }
-      
   }
 }
 
@@ -92,18 +69,13 @@ void setup()
   Serial.begin(115200); // Serial monitor init
 
   WiFi.begin(ssid, pass); // Connect to WiFi 
-  //Serial.print("Connecting ... "); 
-// __________ Connecting to WiFi _______________
-// Connecting animation
+  //Connecting to WiFi 
   while(WiFi.status() != WL_CONNECTED) 
-  {
-    //Serial.print("."); 
+  { 
     delay(400);
-    //Serial.print("\b "); 
-    //delay(400);
   }
-  ServerON = true;
-  //Serial.println(); // New 
+
+  // When conected - blink LED
   digitalWrite(LED_BUILTIN, LOW);
   delay(400);
   digitalWrite(LED_BUILTIN, HIGH);
@@ -113,17 +85,12 @@ void setup()
   digitalWrite(LED_BUILTIN, HIGH);
   delay(400);
   digitalWrite(LED_BUILTIN, LOW);
-  //Serial.print("Connected to: "); // Display connection communicat
-  //Serial.println( String(ssid) );
-  //Serial.print("IP: ");
-  //Serial.println(WiFi.localIP()); // Display IP adress
 
   // Functions that handle server:
   server.on("/", handleRoot); // Root page
   server.on("/on", handleOn); // Monitoring page
   server.on("/Data", handleData); // sending measurements
   server.begin();
-
 }
 
 void handleRoot()
@@ -131,7 +98,7 @@ void handleRoot()
     String html = "<html><head><style> h1 { font-size: 36px; background-color: darkblue; color: white; text-align: center; margin-top: 20px;}</style></head><body>";
     html += "<h1> AUV control panel </h1>"; 
     html += "<br><br><button onclick=\"location.href='/on'\"> <b>AUV ON</b> </button>";
-    html += "<div class=\"footer\">"; // Stopka
+    html += "<div class=\"footer\">"; 
     html += "<p> Author: Marcin Janis </p>";
     html += "</div>";
     html += "</body></html>";
@@ -150,16 +117,16 @@ void handleData() {
   jsonResponse += "\"servoLeftActual\":\"" + incomingData[5] + "\",";
   jsonResponse += "\"statusMsg\":\"" + incomingData[7] + "\"";
   jsonResponse += "}";
-    server.send(200, "application/json", jsonResponse); // Send to panel
+  server.send(200, "application/json", jsonResponse); // Send to panel
 }
 
-// ...
+
 
 void handleOn() {
     String html;
     html += R"rawliteral(
 
-        <!DOCTYPE html> 
+         <!DOCTYPE html> 
         <html lang="pl">
         <head>
           <meta charset="UTF-8">
@@ -170,29 +137,30 @@ void handleOn() {
         <style>
           h1 { 
             /* Header 1 - title */
-            font-size: 36px; 
+            font-size: 240%; 
             color: white; 
             text-align: center; 
-            margin-top: 20px; 
+            margin-top: 0%; 
             background-color: darkblue;
             }
 
           h2 { 
             /* Header 2 */
-            font-size: 18px; 
+            font-size: 110%; 
             color: black;  
-            margin-top: 10%; 
+            margin-top: 3%; 
             }
 
           h3 {
             /* Header 3 - data box  */
-            font-size: 15px;
+            font-size: 100%;
             color: black; 
+	    margin-top: 3%;
             margin-right: 10%; 
             border: 2px solid black; 
             padding: 3%;              
             border-radius: 5px;        
-            width: 200px;        
+            width: 90%;        
             background-color: #F5F5F5; 
           }
 
@@ -200,19 +168,20 @@ void handleOn() {
             /* Header 4 - data box  */
             font-size: 15px;
             color: black; 
+	    margin-top: 3%;
             margin-right: 10%; 
             border: 2px solid black; 
             padding: 3%;              
             border-radius: 5px;        
-            width: 300px;        
+            width: 90%;        
             background-color: #F5F5F5; 
           }
 
                   
           table {
-            width: 30%; /* Width of table */
-            //border-collapse: collapse; /* Delete distances in table (?) */
-            margin: 5%; /* Space before and after table */
+            width: 60%; /* Width of table */
+            border-collapse: collapse;            
+	    margin: 5%; /* Space before and after table */
             font-family: Arial, sans-serif; /* Font */
             border-radius: 5px;
             }
@@ -222,20 +191,20 @@ void handleOn() {
               background-color: darkblue; /* Navy background */
               border: 2px solid black; /* Gray borders */
               color: white; /* White font */
-              padding: 8px; /* Inner space */
+              padding: 1%; /* Inner space */
               text-align: center; /* Center text */
-            }
+	      }
 
             /* Style for table cells */
             td {
               background-color: lightgrey; /* Light Grey background */
               border: 1px solid black; /* Black borders */
-              padding: 8px; /* Inner space */
+              padding: 1%; /* Inner space */
               text-align: center; /* Center text */
             }
 
             /* Style for return button */
-            .auv-button { // its good to change this name
+            .auv-button { 
               margin: 15%;
             }
 
@@ -243,19 +212,19 @@ void handleOn() {
           .container {
             display: flex; /* flexbox */
             justify-content: space-between;
-            margin: 20px; 
+            margin: 2%; 
           }
 
           .column {
-            width: 30%; 
-            padding: 10px; 
+            width: 42%; 
+            padding: 2%; 
             border: 3px solid black; 
             border-radius: 8px; 
           }
 
           .OffOnButton {
-            height: 120px;
-            width: 160px;
+            height: 50%;
+            width: 80%;
           }
 
           .ButtonOn{
@@ -271,7 +240,7 @@ void handleOn() {
           .button-container {
           justify-content: center;
           display: flex; 
-          gap: 20px;     
+          gap: 3%;     
           }
 
           </style>
@@ -281,33 +250,35 @@ void handleOn() {
             <h1> <b> AUV Control Panel </b> </h1>
             <br><br> 
             <div class="button-container">
-            <button onclick="location.href='/'"> <b>AUV OFF</b> </button>
-            <button id="updateTableOnButton"> <b> Log Data </b></button>
-            <button id="motorOnButton"><b> Motor ON/OFF </b></button>
+            	<button onclick="location.href='/'"> <b>AUV OFF</b> </button>
+            	<button id="updateTableOnButton"> <b> Log Data </b></button>
+            	<button id="motorOnButton"><b> Motor ON/OFF </b></button>
             </div>
             <div class="container">
               <div class="column" > 
                 <div class="form-container">
-                <h2> Command Panel: </h2>
-                  <form id="dataForm1">
-                    <h4><label for="selectAction">    Controlled parametr: </label>
-                    <select id="selectAction" name="selectAction">
-                      <option value="R"> Roll </option>
-                      <option value="P"> Pitch </option>
-                      <option value="Y"> Yaw </option>
-                      <option value="I"> Initialization </option>
-                    </select></h4>
+                	<h2> Command Panel: </h2>
+                  	<form id="dataForm1">
+                    	<h4><label for="selectAction">    Controlled orientation parametr: </label>
+                    		<select id="selectAction" name="selectAction">
+                      		<option value="R"> Roll </option>
+                      		<option value="P"> Pitch </option>
+                      		<option value="Y"> Yaw </option>
+                      		<option value="I"> Initialization </option>
+                    		</select></h4>
                   
-                  <h4><label for="dataInput">Setpoint [deg]: </label>
-                  <input type="text" id="dataInputSetpoint" name="dataInput" placeholder=" ... " required>
-                  <input type="submit" value="Set"></h4>
-                  <h4><label for="dataInput">Setpoint Offsset[%]: </label>
-                  <input type="text" id="dataInputSetpointErr1" name="dataInput" placeholder=" ... " required>
-                  <label for="dataInput">Ang. Velocity Offset [deg/s]: </label>
-                  <input type="text" id="dataInputSetpointErr2" name="dataInput" placeholder=" ... " required>
-                  <input type="submit" value="Set"></h4>
+                  	<h4><label for="dataInput">Setpoint [deg]: </label>
+                  	<input type="text" id="dataInputSetpoint" name="dataInput" placeholder=" ... " required>
+                  	<input type="submit" value="Set">
+			<br>Values between -180 and 180 are accetable.</h4>
+                  	<h4>Permissible error of regulation:<br>
+			<label for="dataInput">Setpoint offset [deg]:&emsp;&emsp;&emsp; </label>
+                  	<input type="text" id="dataInputSetpointErr1" name="dataInput" placeholder=" ... " required>
+                  	<br><label for="dataInput">Ang. Velocity Offset [deg/s]: </label>
+                  	<input type="text" id="dataInputSetpointErr2" name="dataInput" placeholder=" ... " required>
+                  	<input type="submit" value="Set"></h4>
                 </form>
-
+		<hr style="border-width: 2px">
                 <form id="dataForm2">
 
                   <h4><label for="dataInput">Motor Power [%]: </label>
@@ -335,24 +306,14 @@ void handleOn() {
               </div>
               </div>
               <div class="column" > 
-		<h2> Setpoints: </h2>
-                <h3>
-                  <p id="rollSetpoint">Roll setpoint [deg]: 0</p>
-                  <p id="pitchSetpoint">Pitch setpoint [deg]:  0</p>
-                  <p id="yawSetpoint">Yaw setpoint [deg]:  0</p>
-                  <br><br>
-                </h3>
-              </div>
-              <div class="column" > 
 	      <h2> Actual state: </h2>
                 <h3>
-                  <p id="rollActual">Roll value [deg]: 0</p>
+                  <p id="rollActual"> Roll value [deg]:&nbsp;&nbsp; 0</p>
                   <p id="pitchActual">Pitch value [deg]:  0</p>
-                  <p id="yawActual">yaw value [deg]:  0</p>
-		</h3>
+                  <p id="yawActual">  Taw value [deg]:&nbsp;&nbsp;  0</p>
+		            </h3>
                   <h3><p id="motorActual">Motor Power [%]:  0</p></h3>
                   <h3><p id="stateMsg"> State:  0</p></h3>
-                </h3>
               </div>
             </div>
             
@@ -409,23 +370,6 @@ void handleOn() {
                       }
                     });
                   }
-
-
-
-                  $.ajax({
-                    url: 'http://192.168.100.61/on', 
-                    type: "POST",
-                    data: { 
-                    dataInput: 0  // Send data
-                  },
-                  success: function(response) {
-                    console.log("Data sent correctly: ", response);
-                  },
-                  error: function(error) {
-                    console.log("Error while sending data: ", error);
-                  }
-                });
-
                 });
               
                 document.getElementById("updateTableOnButton").addEventListener("click", function() {
@@ -446,6 +390,7 @@ void handleOn() {
                         url: '/Data', // Server demand
                         type: 'GET',
                         success: function(data) {
+                            console.log("Data received: ", data);
                             //$('#Table').text(data); // Actualisation
                             $('#Table').text(JSON.stringify(data, null, 2));
                             timeSample = data.timeSample; // Set to global var
@@ -461,13 +406,17 @@ void handleOn() {
                             statusMsg = data.statusMsg;
                             addRow(); // Add another row
                             displayActual();
-                            displaySetpoints();
                         },
                         error: function(error) {
+                          errorCount++;
                           console.log("Error while fetching data:", error);
+                           if (errorCount >= 3) {
+                           console.log("Stopping retries due to multiple errors.");
+                           return;
+                        }
                         },
                         complete: function() {
-                          setTimeout(updateNumber, 1000);  
+                          setTimeout(updateNumber, 1500);  
                         }
                     });
                 }
@@ -499,11 +448,7 @@ void handleOn() {
                     document.getElementById("motorActual").innerText = "Motor Power [%]:   " + motorPower;
                     document.getElementById("stateMsg").innerText = "State:  " + statusMsg;
                 }
-                function displaySetpoints(){             
-                    document.getElementById("rollSetpoint").innerText =  "Roll Setpoint [deg]:   " + RollSetPoint;
-                    document.getElementById("pitchSetpoint").innerText = "Pitch Setpoint [deg]: " + PitchSetPoint;
-                    document.getElementById("yawSetpoint").innerText =   "Yaw Setpoint [deg]:    " + YawSetPoint;
-                }
+               
                 //setInterval(updateNumber, 1000);
                 // Command send form 1 - Task managmenet
               $('#dataForm1').on('submit', function(event) {
@@ -588,9 +533,9 @@ void handleOn() {
 
 void loop()
 {
-      //  int timeStart =millis();
-        server.handleClient(); // Obsługuje zapytania HTTP
-        USART_GetData(); // Odbieranie danych przez USART
+      //  int timeStart =millis(); // Cyce duration monitoring
+        server.handleClient(); // handling HTTP
+        USART_GetData(); // If avaliable, Reciving data from STM32
       //  Serial.print("Cycle duration: ");
       //  Serial.println(millis() - timeStart);
 }
