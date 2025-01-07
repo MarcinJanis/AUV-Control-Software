@@ -135,6 +135,8 @@ float orientationGlobal[3]={0.0f}; // Determined Orientation
 float angularVelocityGlobal[3]; // Rate of changes of determined orientation
 float positionGlobal[3]={0.0f};
 
+float orientationGlobalCorrect[3]={4.3,0.0f,0.0f};
+float servoAngleCorrect[2]={-11,-14.5};
 // Control variables
 float orientationSetpoint[3]; // Setpoints of orientation angles
 float servoAngleRequest[2]; // Requested angle of servos
@@ -157,31 +159,44 @@ uint8_t RX_index=0;
 
 int statusMsg=0;
 
+// Sequence control
 bool NewTask;
 Task TaskTarget; // What should be regulated
 
 float TaskTargetValue=0.0f; // Regulated Value
-float TaskTargetOffset=0.1; // accetable offset
-float DerivativeTargetOffset=0.1;
+float TaskTargetOffset=0.1; // Offset
+float DerivativeTargetOffset=0.1;	// Angular Velocity offset
+
+typedef enum {
+    seting_propper_roll = 0,
+    changing_regulated_angle = 1,
+    returning_to_default_pos = 2,
+	regulatation_done = 3,
+}State;
+
+State stateCounter=seting_propper_roll;
+
+bool PowerON = false;
 // diagnostics variables
 HAL_StatusTypeDef mpuInitStatus,mpuCommStatus,uartStatus; // communication diagnostic
 TickType_t cycleStart,cycleDuration; // cycle duration diagnostic
 TickType_t sysTimeStart;
+
 // debugging variables:
-bool taskExec;
-float test[3];
+float testVar[3];
 
 
 
+// Function responsible for reciving data via UART when there is full message in Buffer
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
     	RX_Buff[RX_index]=received_char;
     	RX_index++;
-    	if (received_char == '>'){
+    	if (received_char == '>'){ // Correct ending of message
     		dataReceived = true;
     		memcpy(RX_Buff_copy, RX_Buff, RX_index-1);
     		RX_index=0;
-    		printf("Odebrano dane DMA: %s\n", RX_Buff);
+    		//printf("Data recived: %s\n", RX_Buff);
     		memset(RX_Buff_copy,0,sizeof(RX_Buff_copy));
     	}
     	HAL_UART_Receive_DMA(&huart1, &received_char, 1);
@@ -414,9 +429,9 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 1;
+  htim1.Init.Prescaler = 19;
   htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
-  htim1.Init.Period = 4999;
+  htim1.Init.Period = 2499;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -612,7 +627,7 @@ static void MX_DMA_Init(void)
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
   /* DMA2_Stream2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
@@ -683,7 +698,7 @@ void StartDefaultTask(void const * argument)
 
 	  if (initRequest == true){
 
-		  statusMsg = 20; // Init
+		  statusMsg = 99; // Init
 		  sysTimeStart = xTaskGetTickCount();
 
 	  	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
@@ -756,7 +771,6 @@ void processInputDataFcn(void const * argument)
   for(;;)
   {
 	  if(xSemaphoreTake(inputsReaded_S_Handle,portMAX_DELAY)==pdTRUE){
-
 	  // Scale data and calculate angle based on acell
 	  accelCalc(accellRaw, accellLocal , orientationAccelLocal);
 	  gyroCalc(gyroRaw,gyroLocal);
@@ -766,6 +780,9 @@ void processInputDataFcn(void const * argument)
 	  yawEvaluate(orientationGlobal, gyroGlobal[2] ,NavigInitDone);
 	  kalmanFilter(orientationAccelLocal, gyroGlobal, orientationGlobal, accellLocal, gyroBias, NavigInitDone);
 
+	  // Correct orientation with initial deviation
+	  orientationGlobal[0]=orientationGlobal[0]-orientationGlobalCorrect[0];
+	  orientationGlobal[1]=orientationGlobal[1]-orientationGlobalCorrect[1];
 	 // if initialization procces active -> finish
 	  if (NavigInitDone == true)NavigInitDone=false;
 	  xSemaphoreGive(inputsCalculated_S_Handle);
@@ -791,8 +808,34 @@ void MapOutputFunction(void const * argument)
   {
 	 if(xSemaphoreTake(controlDone_S_Handle,portMAX_DELAY)==pdTRUE){
 
+		if (testVar[0]==1){
+		char Buff[60];
+		snprintf(Buff, sizeof(Buff), "%f,%f,%f\n",orientationGlobal[0],orientationGlobal[1],orientationGlobal[2]);
+		printf(Buff);
+		snprintf(Buff, sizeof(Buff), "%f,%f,%f\n",angularVelocityGlobal[0],angularVelocityGlobal[1],angularVelocityGlobal[2]);
+		printf(Buff);
+		snprintf(Buff, sizeof(Buff), "%f,%f\n",servoAngleRequest[0],servoAngleRequest[1]);
+		printf(Buff);
+		snprintf(Buff, sizeof(Buff), "%d\n",stateCounter);
+		printf(Buff);
+		}
+		//else{
+		//printf("%d,%d,%d,%d,%d,%d\n",accellRaw[0],accellRaw[1],accellRaw[2],gyroRaw[0],gyroRaw[1],gyroRaw[2]);
+		//}
+
+		if (!PowerON){
+		servoAngleRequest[0]=0+servoAngleCorrect[0];
+		servoAngleRequest[1]=0+servoAngleCorrect[1];
+		servoSet(servoAngleRequest,&htim3);
+		motorSet(0,&htim1);
+		}
+		else {
+		servoAngleRequest[0]=servoAngleRequest[0]+servoAngleCorrect[0];
+		servoAngleRequest[1]=servoAngleRequest[1]+servoAngleCorrect[1];
 		servoSet(servoAngleRequest,&htim3);
 		motorSet(motorPower_percent,&htim1);
+		}
+
 		cycleDuration = (xTaskGetTickCount()- cycleStart); // calculate duration time [ms]
 
 	 }
@@ -813,18 +856,20 @@ void ControllerFcn(void const * argument)
 	float orientationGlobalPrev[3]={0.0f};
 
 	// Set initial parameters for regulator
+		rollController.T = Ts;
 		rollController.Kp=1.368792;
 		rollController.Ki=0.802290;
 		rollController.Kd=0.448888;
 		rollController.Nd=13.235897;
 		rollController.outMax = 30;
-		rollController.outMin = 30;
+		rollController.outMin = -30;
+		directionController.T = Ts;
 		directionController.Kp=1.368792;
 		directionController.Ki=0.802290;
 		directionController.Kd=0.448888;
 		directionController.Nd=13.235897;
 		directionController.outMax = 30;
-		directionController.outMin = 30;
+		directionController.outMin = -30;
 
   /* Infinite loop */
   for(;;)
@@ -866,14 +911,14 @@ void ControllerFcn(void const * argument)
 void StateControlFcn(void const * argument)
 {
   /* USER CODE BEGIN StateControlFcn */
-	typedef enum {
-	    seting_propper_roll = 0,
-	    changing_regulated_angle = 1,
-	    returning_to_default_pos = 2,
-		regulatation_done = 3,
-	}State;
+	//typedef enum {
+	//    seting_propper_roll = 0,
+	//    changing_regulated_angle = 1,
+	//    returning_to_default_pos = 2,
+	//	regulatation_done = 3,
+	//}State;
 
-	State stateCounter=seting_propper_roll;
+	//State stateCounter=seting_propper_roll;
   /* Infinite loop */
   for(;;)
   {
@@ -883,6 +928,8 @@ void StateControlFcn(void const * argument)
 	  //***********State controller**************//
 	  if (NewTask){
 		  stateCounter = 0;
+			PIDcontroller_Reset(&rollController);
+			PIDcontroller_Reset(&directionController);
 		  NewTask = false;
 	  }
 
@@ -893,6 +940,7 @@ void StateControlFcn(void const * argument)
 	  		  YawControllerActive=false;
 	  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
 	  			  stateCounter = regulatation_done;
+	  			  PIDcontroller_Reset(&rollController);
 	  		  }
 	  		  break;
 
@@ -905,6 +953,7 @@ void StateControlFcn(void const * argument)
 		  	  		  orientationSetpoint[0]=90.0;
 		  	  		  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
 		  	  			  stateCounter = changing_regulated_angle;
+		  	  			  PIDcontroller_Reset(&rollController);
 		  	  		  }
 		  	  		  break;
 
@@ -914,6 +963,7 @@ void StateControlFcn(void const * argument)
 		  	  		  orientationSetpoint[2]=TaskTargetValue;
 		  	  		  if (isSet(orientationGlobal[2],angularVelocityGlobal[2],orientationSetpoint[2],TaskTargetOffset,DerivativeTargetOffset)){
 		  	  			  stateCounter = returning_to_default_pos;
+		  	  			  PIDcontroller_Reset(&directionController);
 		  	  		  }
 		  	  		  break;
 
@@ -941,15 +991,17 @@ void StateControlFcn(void const * argument)
 		  			  orientationSetpoint[0]=0.0;
 		  			  if (isSet(orientationGlobal[0],angularVelocityGlobal[0],orientationSetpoint[0],TaskTargetOffset,DerivativeTargetOffset)){
 		  			  	  stateCounter = changing_regulated_angle;
+		  			  	  PIDcontroller_Reset(&rollController);
 		  			  }
 		  			  break;
 
 		  		  case changing_regulated_angle:
 		  			  RollControllerActive=false;
 		  			  PitchControllerActive=true;
-		  			  orientationSetpoint[2]=TaskTargetValue;
+		  			  orientationSetpoint[1]=TaskTargetValue;
 		  			  if (isSet(orientationGlobal[2],angularVelocityGlobal[2],orientationSetpoint[2],TaskTargetOffset,DerivativeTargetOffset)){
 		  				  stateCounter = returning_to_default_pos;
+		  				  PIDcontroller_Reset(&directionController);
 		  			  }
 		  			  break;
 
@@ -974,7 +1026,7 @@ void StateControlFcn(void const * argument)
 	  //************Set status message************//
 
 	  if (mpuInitStatus != HAL_OK || mpuCommStatus != HAL_OK ){
-		  statusMsg = 31; // Error with I2C communication
+		  statusMsg = 77; // Error with I2C communication
 	  }
 	  else {
 		  statusMsg = TaskTarget*10+stateCounter;	// xy , where x - what is regulated, y - which state of regulation
@@ -1024,10 +1076,14 @@ void ExternalCommunicationFcn(void const * argument)
 			  if (index_temp == 0){
 				  RX_data_dest1 = *substr; // Order or Parameter
 				  printf("Recived category 1: %c\n",RX_data_dest1);
+
+				  if (RX_data_dest1 == "0") PowerON = false; // If recived "0>" -> Turn off all actuators
+				  else PowerON = true;
+
 				  index_temp++;
 			  }
 			  else if (index_temp == 1){
-				  RX_data_dest2 = *substr; // Case 'O' : Roll, Pitch or Yaw; Case 'P'
+				  RX_data_dest2 = *substr; // Case 'O' : Roll, Pitch or Yaw; Case 'P' : Roll regulator , Yaw and Pitch regualtor
 				  printf("Recived category 2: %c\n",RX_data_dest1);
 				  index_temp++;
 			  }
@@ -1044,24 +1100,22 @@ void ExternalCommunicationFcn(void const * argument)
 			  switch (RX_data_dest2 ){
 			  case 'R': // Roll
 				  NewTask = true;
-				  orientationSetpoint[0]=RX_Data[0];
 				  TaskTarget = Roll;
 				  break;
 			  case 'P': // Pitch
 				  NewTask = true;
-				  orientationSetpoint[1]=RX_Data[0];
 				  TaskTarget = Pitch;
 				  break;
 			  case 'Y': // Yaw
 				  NewTask = true;
-				  orientationSetpoint[2]=RX_Data[0];
 				  TaskTarget = Yaw;
 				  break;
 			  case 'I': // Init
 				  initRequest = true;
 				  break;
 			  }
-			  TaskTargetOffset=RX_Data[1]; // accetable offset
+			  TaskTargetValue=RX_Data[0];
+			  TaskTargetOffset=RX_Data[1];
 			  DerivativeTargetOffset=RX_Data[2];
 
 		  }
@@ -1104,9 +1158,9 @@ void ExternalCommunicationFcn(void const * argument)
 	  		added_size = snprintf((char *)buff_to_ESP + pos, sizeof(buff_to_ESP) - pos,"%.2f,", data[i]);
 	  		pos += added_size;
 	  	}
-	  	else{
-	  			//printf("bufor buff_to_ESP overflow\n");
-	  	}
+	  	//else{
+	  	//printf("bufor buff_to_ESP overflow\n");
+	  	//}
 	  	added_size = snprintf((char *)buff_to_ESP + pos, sizeof(buff_to_ESP) - pos, "%d>\n",statusMsg);
 	  	//printf("%s\n",buff_to_ESP);
 	  	//printf("Rozmiar buffora: %d\n", sizeof(buff_to_ESP));
