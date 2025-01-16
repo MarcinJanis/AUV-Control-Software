@@ -43,13 +43,10 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 int __io_putchar(int ch){
 	ITM_SendChar(ch);
 	return ch;
 }
-
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -136,7 +133,7 @@ float angularVelocityGlobal[3]; // Rate of changes of determined orientation
 float positionGlobal[3]={0.0f};
 
 float orientationGlobalCorrect[3]={4.3,0.0f,0.0f};
-float servoAngleCorrect[2]={-11,-14.5};
+float servoAngleCorrect[2]={-3,-10};
 // Control variables
 float orientationSetpoint[3]; // Setpoints of orientation angles
 float servoAngleRequest[2]; // Requested angle of servos
@@ -877,12 +874,13 @@ void ControllerFcn(void const * argument)
 	  if(xSemaphoreTake(inputsCalculated_S_Handle,portMAX_DELAY)==pdTRUE){
 
 		  if ( RollControllerActive == true ){
-			  servoAngleRequest[0]=PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
+			  servoAngleRequest[0]=-PIDcontroller(&rollController,orientationGlobal[0],orientationSetpoint[0],NavigInitDone);
 			  servoAngleRequest[1]=-servoAngleRequest[0];
 		  }
 		  else if ( PitchControllerActive == true){
 
 			  servoAngleRequest[0]=PIDcontroller(&directionController,orientationGlobal[1],orientationSetpoint[1],NavigInitDone);
+
 			  servoAngleRequest[1]=servoAngleRequest[0];
 		  }
 		  else if ( YawControllerActive == true){
@@ -1077,7 +1075,7 @@ void ExternalCommunicationFcn(void const * argument)
 				  RX_data_dest1 = *substr; // Order or Parameter
 				  printf("Recived category 1: %c\n",RX_data_dest1);
 
-				  if (RX_data_dest1 == "0") PowerON = false; // If recived "0>" -> Turn off all actuators
+				  if (RX_data_dest1 == '0') PowerON = false; // If recived "0>" -> Turn off all actuators
 				  else PowerON = true;
 
 				  index_temp++;
@@ -1172,7 +1170,6 @@ void ExternalCommunicationFcn(void const * argument)
   }
   /* USER CODE END ExternalCommunicationFcn */
 }
-
 /**
   * @brief  Period elapsed callback in non blocking mode
   * @note   This function is called  when TIM10 interrupt took place, inside
