@@ -11,8 +11,6 @@
 #define I2C_TIMEOUT 200
 #define Ts 0.06
 #define CLK 100000000
-
-
 #define PI 3.141592f
 #define g 9.81f
 //float debugMatrix[3];
@@ -142,7 +140,7 @@ HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_
 	AccellDataRaw[1] = (int16_t)(data[2]<<8 | data[3]); // Gyro -> Y Axis
 	AccellDataRaw[2] = (int16_t)(data[4]<<8 | data[5]); // Gyro -> Z Axis
 
-	GyroDataRaw[0] =  (int16_t)(data[8]<<8 | data[9]);   // Accell -> X Axis
+	GyroDataRaw[0] =  (int16_t)(data[8]<<8  | data[9]);   // Accell -> X Axishhy
 	GyroDataRaw[1] =  (int16_t)(data[10]<<8 | data[11]); // Accell -> Y Axis
 	GyroDataRaw[2] =  (int16_t)(data[12]<<8 | data[13]); // Accell -> Z Axis
 	return status;
@@ -240,42 +238,18 @@ void vectTransform(float orientationGlobal[3], float gyroLocal[3],float gyroBias
 
 }
 
-
-
-void velocityLocal(float *velocity, float accelerationLocal[3], float orientationGlobal[3], bool NavigInitDone){
-/* Matrix [0;0;1] transform with invers rotation matrix (global to local )
- *                                                                -sin(P)/(cos(P)^2 + sin(P)^2)
-(cos(P)*sin(R))/(cos(P)^2*cos(R)^2 + cos(P)^2*sin(R)^2 + cos(R)^2*sin(P)^2 + sin(P)^2*sin(R)^2)
-(cos(P)*cos(R))/(cos(P)^2*cos(R)^2 + cos(P)^2*sin(R)^2 + cos(R)^2*sin(P)^2 + sin(P)^2*sin(R)^2)
- *
- */
-
-	float grav_temp = sin(deg2rad(orientationGlobal[0]))*sin(deg2rad(orientationGlobal[2])) + (cos(deg2rad(orientationGlobal[0]))*cos(deg2rad(orientationGlobal[2])) * sin(deg2rad(orientationGlobal[1])));
-	*velocity += g *( accelerationLocal[0] + grav_temp )* Ts;
-
-	//debugMatrix[0]= grav_temp;
-	//debugMatrix[1]= accelerationLocal[0] + sin(deg2rad(orientationGlobal[1]));
-	if (NavigInitDone == true){
-		*velocity = 0.0f;
-	}
-
-}
-
-
-
-
 float PIDcontroller(regulator_PID *ctrlParam, float input,float setpoint, bool reset){
 
 	float error = input - setpoint;
 	// Integration
-	if (!ctrlParam->isSaturation)ctrlParam-> integrator += error*ctrlParam->T; // Integration with anti-Windup (clamping method)
+	if (!ctrlParam->isSaturation)ctrlParam-> integrator += ctrlParam->Ki*error*ctrlParam->T; // Integration with anti-Windup (clamping method)
 	// Derivative factor
 	float derivative = (ctrlParam->Kd * ctrlParam->Nd * (error - ctrlParam->error_prev)) / (1 + (ctrlParam->Nd * ctrlParam->T));
 	derivative = derivative - ctrlParam -> deriv_prev * ctrlParam->Nd * ctrlParam->T / (1 + (ctrlParam->Nd * ctrlParam->T));
 
 
 	//Output calculation
-	float output = ctrlParam->Kp*error + derivative + ctrlParam->Ki*ctrlParam->integrator;
+	float output = ctrlParam->Kp*error + derivative + ctrlParam->integrator;
 	if (output > ctrlParam->outMax){
 		output = ctrlParam->outMax; // Max output limitation
 		ctrlParam->isSaturation = true; // Set output saturation flag
@@ -335,73 +309,4 @@ uint16_t OCR_register;
 OCR_register = (uint16_t)((100.0f - power_percent)/100.0f*4999);
 __HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_2, OCR_register);
 }
-
-/*
- *
- *
- *
- *
- *
- *
- void positionEvaluate(float positionGlobal[3],float accellGlobal[3] ,bool NavigInitDone){
-	static float velocityGlobal[3]={0.0f};
-	for (int i=0;i<=2;i++){
-			//temp=roundf(g*accellGlobal[i]*Ts*10000)/100; // cm/s
-			velocityGlobal[i]+=g*accellGlobal[i]*Ts;
-			}
-	for (int i=0;i<=2;i++){
-			positionGlobal[i]+= velocityGlobal[i]*Ts; // cm
-			}
-	if (NavigInitDone == true){
-		for (int i=0;i<=2;i++){
-			positionGlobal[i]=0.0f;
-			velocityGlobal[i]=0.0f;
-		}
-	}
-}
-
-
-float filter(filterStruct *filterData ,float input, bool NavigInitDone){
-
-// If filter type is FIR, int denum = 0 ; float denumMatrix = NULL
-
-	float output=0.0f;
-
-	if (NavigInitDone == true ){
-		for (int i=0;i<=10;i++){
-			filterData->inRegister[i]=0.0f;
-			filterData->outRegister[i]=0.0f;
-		}
-	}
-
-	// shift in register
-	for (int i=filterData->order; i>0 ; i--){
-		filterData->inRegister[i]=filterData->inRegister[i-1];
-	}
-
-	// add curect input to register
-	filterData->inRegister[0]=input;
-	// calc output
-
-	for (int i=0; i<= filterData->order ; i++){
-		output+= filterData->inRegister[i]*filterData->numMatrix[i];
-	}
-
-	if (filterData->IIR == true ){  // - if this is IIR filter
-
-		for (int i=1; i <= filterData->order ; i++){
-			output -= filterData->outRegister[i]*filterData->denumMatrix[i];
-		}
-		// shift output register
-		for (int i=filterData->order; i>0 ; i--){
-			filterData->outRegister[i]=filterData->outRegister[i-1];
-		}
-		filterData->outRegister[0]=output;
-
-	}
-
-	return output;
-}
-
-*/
 
