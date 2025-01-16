@@ -23,7 +23,7 @@ bool isSet(float input, float derivative , float setpoint , float input_offset ,
 HAL_StatusTypeDef mpu6050_init(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS);	// MPU-6050 configuration
 HAL_StatusTypeDef mpu6050_update(I2C_HandleTypeDef *hi2c, uint8_t ADDRESS,int16_t AccellDataRaw[3], int16_t GyroDataRaw[3]);	// Get data from MPU-6050
 
-// Orientation caluclation:
+// Orientation calculation:
 void accelCalc(int16_t accellDataRaw[3],float accellLocal[3],float orientationAccelGlobal[3]);	// Calculation of acceleration and orientation based on accelerometr measurement
 void gyroCalc(int16_t gyroDataRaw[3], float gyroDataScaled[3]); // Calculation of angle velocity based on gyroscope measurement
 void kalmanFilter(float orientationAccellGlobal[3], float gyroGlobal[3], float orientationGlobal[3], float accellLocal[3],float gyroBias[3], bool NavigInitDone);	// Kalman filtering
@@ -56,23 +56,4 @@ void motorInit(TIM_HandleTypeDef *htim);	// Init timer for motor
 void motorSet(float power_percent,TIM_HandleTypeDef *htim);	// Set motor for requested power
 #endif
 
-
-
-/*
-Unused funtions
-void positionEvaluate(float positionGlobal[3],float accellGlobal[3] ,bool NavigInitDone);
-void velocityLocal(float *velocity, float accelerationLocal[3], float orientationGlobal[3], bool NavigInitDone);
-float filter(filterStruct *filterData ,float input, bool NavigInitDone)
-typedef struct{
-	// Max size of tab will be 10
-	// to define before use
-	 bool IIR; // true if its IIR type filter
-	 int order; // max is 10
-	 float numMatrix[11];
-	 float denumMatrix[11];
-	// memory
-	 float inRegister[11]; // need to be init
-	 float outRegister[11]; // need to be init
-}filterStruct;
- */
 
