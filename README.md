@@ -42,14 +42,14 @@ It receives telemetry data from the STM32 and serves it to the web panel.
 
 
 📂 File Structure
-./
-   ├── ControlServerESP8266/
-   │   ├── ControlPanel.json
-   │   └── ControlServerESP8266.ino   # ESP8266 Web Server & Wi-Fi Bridge Code
-   │
-   ├── AuvControl.c                    # Implementation of control functions (PID, Kalman)
-   ├── AuvControl.h                    # Header file for AuvControl.c
-   └── main.c                        # Main STM32 file (init, RTOS task setup)
+./ <br>
+   ├── ControlServerESP8266/  <br>
+   │   ├── ControlPanel.json  <br>
+   │   └── ControlServerESP8266.ino   # ESP8266 Web Server & Wi-Fi Bridge Code  <br>
+   │  <br>
+   ├── AuvControl.c                    # Implementation of control functions (PID, Kalman)  <br>
+   ├── AuvControl.h                    # Header file for AuvControl.c  <br>
+   └── main.c                        # Main STM32 file (init, RTOS task setup)  <br>
    
 ---
 # Hardware:
