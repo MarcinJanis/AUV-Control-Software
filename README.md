@@ -6,6 +6,10 @@ The system is based on a dual-microcontroller architecture (STM32 and ESP8266) a
 🎯 Project Goal
 The main objective of this project was to create a system for controlling the AUV's attitude (Roll, Pitch, and Yaw). The system allows an operator to send high-level commands and monitor the vehicle's telemetry in real-time through a web-based control panel.
 
+--- 
+# Photo documentation
+![AUV Image](imgs/AUV_Photo.png)
+
 🛠️ Architecture and Implementation
 
 STM32 Controller: The heart of the system is an STM32F4 microcontroller running a real-time operating system (FreeRTOS) . It is responsible for:
@@ -75,4 +79,5 @@ Self-made electric circut:
 STM32CubeIDE
 
 Arduino IDE (with the ESP8266 board package installed)
+
 
