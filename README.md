@@ -54,11 +54,11 @@ It receives telemetry data from the STM32 and serves it to the web panel.
 ---
 # Hardware:
 
-STM32F4 development board (e.g., Nucleo)
+STM32F4 development board
 
-ESP8266 module (e.g., NodeMCU, D1 Mini)
+ESP8266 NodeMCU module
 
-MPU-6050 IMU sensor
+MPU-6050 IMU sensor (gyroscope and accelerometer)
 
 Digital controlled waterproof servos
 
