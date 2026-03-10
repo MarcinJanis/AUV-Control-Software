@@ -1,8 +1,8 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 
-const char* ssid = "Artus"; // WiFi name
-const char* pass = "ZLKNshiq"; // WiFi password -> change for asking about passwrd and name 
+const char* ssid = ""; // WiFi name
+const char* pass = ""; // WiFi password 
 
 WiFiClient client; //creating object WiFi for establish connection
 ESP8266WebServer server(80); // creating Web server object
